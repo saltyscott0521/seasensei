@@ -88,3 +88,10 @@ enum Compass {
         return points[Int(normalized / 22.5 + 0.5) % 16]
     }
 }
+
+extension Forecast {
+    /// The forecast hour closest to `date`, e.g. to compare against a live reading.
+    func hour(nearest date: Date) -> HourlyWind? {
+        hours.min { abs($0.time.timeIntervalSince(date)) < abs($1.time.timeIntervalSince(date)) }
+    }
+}

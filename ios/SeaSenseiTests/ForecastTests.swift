@@ -38,3 +38,39 @@ final class ForecastTests: XCTestCase {
         XCTAssertEqual(Compass.point(-90), "W")
     }
 }
+
+final class ObservationTests: XCTestCase {
+    func testDecodesLatestCOOPSWindReading() throws {
+        let json = """
+        {"metadata": {"id": "8726607", "name": "Old Port Tampa", "lat": "27.8578", "lon": "-82.5528"},
+         "data": [{"t": "2026-09-28 22:54", "s": "12.44", "d": "235.00", "dr": "SW", "g": "15.35", "f": "0,0"}]}
+        """.data(using: .utf8)!
+        let obs = try JSONDecoder().decode(COOPSWindResponse.self, from: json).observation()
+
+        XCTAssertEqual(obs.stationName, "Old Port Tampa")
+        XCTAssertEqual(obs.speed, 12.44)
+        XCTAssertEqual(obs.gust, 15.35)
+        XCTAssertEqual(obs.direction, 235)
+        // 2026-09-28 22:54 GMT
+        XCTAssertEqual(obs.time, Date(timeIntervalSince1970: 1790636040))
+    }
+
+    func testStationErrorBecomesThrownMessage() throws {
+        let json = #"{"error": {"message": "No data was found."}}"#.data(using: .utf8)!
+        let response = try JSONDecoder().decode(COOPSWindResponse.self, from: json)
+
+        XCTAssertThrowsError(try response.observation()) { error in
+            XCTAssertEqual(error.localizedDescription, "No data was found.")
+        }
+    }
+
+    func testNearestForecastHour() {
+        let start = Date(timeIntervalSince1970: 1790632800)  // 22:00 GMT
+        let hours = (0..<3).map {
+            HourlyWind(time: start.addingTimeInterval(Double($0) * 3600), speed: Double($0), gust: 0, direction: 0)
+        }
+        let forecast = Forecast(timeZone: .gmt, hours: hours, fetchedAt: start)
+
+        XCTAssertEqual(forecast.hour(nearest: start.addingTimeInterval(54 * 60))?.time, hours[1].time)
+    }
+}

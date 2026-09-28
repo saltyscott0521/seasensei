@@ -9,6 +9,7 @@ struct AddSpotView: View {
     @State private var coordinate: CLLocationCoordinate2D?
     @State private var minKnots = 15.0
     @State private var maxKnots = 30.0
+    @State private var stationID = ""
     @State private var position = MapCameraPosition.region(MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 27.72, longitude: -82.62),
         span: MKCoordinateSpan(latitudeDelta: 0.6, longitudeDelta: 0.6)))
@@ -43,6 +44,14 @@ struct AddSpotView: View {
                     Stepper("Min \(Int(minKnots)) kn", value: $minKnots, in: 5...maxKnots)
                     Stepper("Max \(Int(maxKnots)) kn", value: $maxKnots, in: minKnots...50)
                 }
+                Section {
+                    TextField("e.g. 8726607", text: $stationID)
+                        .keyboardType(.numberPad)
+                } header: {
+                    Text("NOAA station (optional)")
+                } footer: {
+                    Text("A Tides & Currents station ID with a wind sensor, shown as live wind next to the forecast.")
+                }
             }
             .navigationTitle("New Spot")
             .navigationBarTitleDisplayMode(.inline)
@@ -62,7 +71,8 @@ struct AddSpotView: View {
         guard let coordinate else { return }
         store.add(Spot(name: name.trimmingCharacters(in: .whitespaces),
                        latitude: coordinate.latitude, longitude: coordinate.longitude,
-                       minKnots: minKnots, maxKnots: maxKnots))
+                       minKnots: minKnots, maxKnots: maxKnots,
+                       stationID: stationID.isEmpty ? nil : stationID))
         dismiss()
     }
 }
