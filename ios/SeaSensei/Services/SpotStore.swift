@@ -17,7 +17,7 @@ final class SpotStore {
            let saved = try? JSONDecoder().decode([Spot].self, from: data) {
             spots = saved
         } else {
-            spots = []
+            spots = Spot.tampaBay
         }
     }
 
