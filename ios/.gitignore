@@ -1,0 +1,6 @@
+*.xcodeproj
+SeaSensei/Info.plist
+xcuserdata/
+DerivedData/
+.build/
+.DS_Store
