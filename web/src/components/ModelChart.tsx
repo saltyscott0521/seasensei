@@ -1,14 +1,16 @@
 import { motion } from "motion/react";
 import { useMemo, useRef, useState } from "react";
+import { useChartSize } from "./useChartSize";
 import { agreement, MODELS, spreadAt, type ModelCompare, type Spot } from "../lib/wind";
 import type { Range } from "./ForecastChart";
 
-const W = 640, H = 200, L = 28, R = 8, T = 12, B = 26;
+const L = 32, R = 10, T = 14, B = 30;
 const HOUR = 3600e3;
 
 /** HRRR, NBM, ECMWF and GFS on one axis. The shaded band is the spread between them — a free confidence signal. */
-export function ModelChart({ data, spot, range, tz }: { data: ModelCompare; spot: Spot; range: Range; tz: string }) {
+export function ModelChart({ data, spot, range, tz, maxH = 560 }: { data: ModelCompare; spot: Spot; range: Range; tz: string; maxH?: number }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [wrapRef, { w: W, h: H }] = useChartSize(250, 0.62, maxH);
   const [cursor, setCursor] = useState<number | null>(null);
 
   const idx = useMemo(() => {
@@ -45,7 +47,7 @@ export function ModelChart({ data, spot, range, tz }: { data: ModelCompare; spot
     const labels = idx.map((i) => data.times[i]).filter((t) => (long ? hourOf(t) === 0 || hourOf(t) === 12 : hourOf(t) % (range === "24h" ? 4 : 6) === 0))
       .map((t) => ({ x: x(t), text: hourOf(t) === 0 ? dayFmt.format(t) : long ? "" : hourFmt.format(t), day: hourOf(t) === 0 }));
     return { t0, t1, top, x, y, paths: MODELS.map((mm) => ({ ...mm, d: path(mm.key) })), band, labels, ticks: [0, 10, 20, 30, 40, 50].filter((v) => v <= top) };
-  }, [data, idx, spot, range, tz]);
+  }, [data, idx, spot, range, tz, W, H]);
 
   const now = Date.now();
   const nowX = now >= m.t0 && now <= m.t1 ? m.x(now) : null;
@@ -70,7 +72,8 @@ export function ModelChart({ data, spot, range, tz }: { data: ModelCompare; spot
   return (
     <div>
       <div className="mb-2 flex flex-wrap gap-1.5 px-1">{ag && chip(ag, "Next 48 h")}{ag7 && chip(ag7, "Days 3–7")}</div>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full touch-pan-y select-none" role="img" aria-label="Wind forecast by model"
+      <div ref={wrapRef}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block touch-pan-y select-none" role="img" aria-label="Wind forecast by model"
         onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={() => setCursor(null)} onPointerUp={(e) => e.pointerType !== "mouse" && setCursor(null)}>
         {m.ticks.map((v) => (
           <g key={v}>
@@ -100,6 +103,7 @@ export function ModelChart({ data, spot, range, tz }: { data: ModelCompare; spot
           return v == null ? null : <circle key={mm.key} cx={m.x(data.times[cursor])} cy={m.y(v)} r="3.5" fill={mm.color} stroke="#05080f" strokeWidth="1.5" />;
         })}
       </svg>
+      </div>
 
       <div className="mt-2 grid grid-cols-4 gap-1.5">
         {MODELS.map((mm) => {

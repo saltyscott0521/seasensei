@@ -9,6 +9,12 @@ test("phone: bottom sheet, spot detail, timeline; nothing scrolls sideways", asy
 
   await page.getByRole("heading", { name: "Fort De Soto" }).click(); // the peek snap shows the first card; the rest need a drag up
   await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
+  // the chart is a usable size on a phone, with the bar chart beneath it
+  const line = page.locator('svg[aria-label="48 hour wind forecast"]');
+  await line.scrollIntoViewIfNeeded();
+  expect((await line.boundingBox())!.height).toBeGreaterThan(240);
+  await expect(page.locator('svg[aria-label^="Hourly wind bars"]')).toBeVisible();
+
   await page.getByRole("button", { name: "Spot settings" }).click();
   await expect(page.getByRole("button", { name: "Suggest from coastline" })).toBeVisible();
 

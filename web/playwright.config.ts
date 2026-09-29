@@ -15,8 +15,8 @@ export default defineConfig({
     launchOptions: { args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] },
   },
   projects: [
-    { name: "desktop", testIgnore: /(phone|debug)\.spec\.ts/, use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 } } },
-    { name: "phone", testMatch: /(phone|debug)\.spec\.ts/, use: { ...devices["Pixel 7"] } },
+    { name: "desktop", testIgnore: /(phone)\.spec\.ts/, use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 } } },
+    { name: "phone", testMatch: /(phone)\.spec\.ts/, use: { ...devices["Pixel 7"] } },
   ],
   webServer: { command: "npm run dev -- --host 127.0.0.1 --port 4173 --strictPort", url: "http://127.0.0.1:4173", reuseExistingServer: !process.env.CI, timeout: 60_000 },
 });

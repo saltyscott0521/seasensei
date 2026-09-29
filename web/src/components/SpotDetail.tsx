@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Radio, Settings2, Trash2 } from "lucide-react";
+import { ArrowLeft, Maximize2, Radio, Settings2, Trash2, X } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { spotStore, useModelCompare, useObsHistory } from "../lib/data";
@@ -8,6 +9,7 @@ import { arcLabel, compass, isRideable, nearestHour, rideState, scoreForecast, w
 import { Dial, Knots, RideBadge, Skeleton, WindArrow } from "./bits";
 import { DirectionPicker, RangeSlider, StationPicker } from "./controls";
 import { ForecastChart, windowFor, type Range } from "./ForecastChart";
+import { BarChart } from "./BarChart";
 import { ModelChart } from "./ModelChart";
 
 export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void }) {
@@ -16,16 +18,36 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
   const [editing, setEditing] = useState(false);
   const [range, setRange] = useState<Range>("48h");
   const [view, setView] = useState<"forecast" | "models">("forecast");
+  const [expanded, setExpanded] = useState(false);
   const ref = useReferenceStation(spot);
   const history = useObsHistory(ref?.id);
   const models = useModelCompare(spot, view === "models");
   const nbmStart = fc.data?.hours.find((h) => h.model === "nbm")?.t ?? Infinity;
   const tz = fc.data?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const shown = scrub ?? now;
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setExpanded(false); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [expanded]);
   const ride = shown ? rideState(shown.speed, spot, shown.dir) : null;
   const when = scrub
     ? new Intl.DateTimeFormat([], { timeZone: tz, weekday: "short", hour: "numeric" }).format(scrub.t) + (scrub.model === "nbm" ? " · NBM" : " · HRRR")
     : now?.source === "live" ? `Live · ${now.stationName}${now.km != null ? ` (${now.km < 10 ? now.km.toFixed(1) : Math.round(now.km)} km)` : ""} · ${ago(now.t)}` : "Now · HRRR model";
+
+  // In the full-screen view, leave room for the bar chart and readout below the line chart.
+  const maxH = expanded ? Math.max(250, Math.round(window.innerHeight * 0.44)) : 560;
+  const chartBody = view === "forecast" ? (
+    fc.data ? (
+      <div className="flex flex-col gap-1">
+        <ForecastChart forecast={fc.data} spot={spot} onScrub={setScrub} scrubT={scrub?.t} range={range} obs={history.data} maxH={maxH} />
+        <BarChart forecast={fc.data} spot={spot} onScrub={setScrub} scrubT={scrub?.t} range={range} obs={history.data} />
+        <Accuracy hours={windowFor(fc.data.hours, "24h")} obs={history.data} loading={history.isPending && !!ref} refName={ref?.name} km={ref?.km} />
+      </div>
+    ) : <Skeleton className="h-72" />
+  ) : models.data ? <ModelChart data={models.data} spot={spot} range={range} tz={tz} maxH={maxH} />
+    : models.isError ? <p className="p-4 text-sm text-rose-300">Couldn't load the model comparison.</p> : <Skeleton className="h-72" />;
 
   return (
     <div className="flex flex-col gap-4">
@@ -97,19 +119,30 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
         </div>
       )}
 
-      {/* Chart */}
-      <div className="rounded-3xl border border-white/[.07] bg-white/[.025] p-3">
-        <div className="mb-1 flex flex-wrap items-center justify-between gap-2 px-1">
-          <Segmented value={view} onChange={setView} id="view-pill" options={[["forecast", "Forecast"], ["models", "Models"]]} />
-          <Segmented value={range} onChange={setRange} id="range-pill" options={[["24h", "Past 24 h"], ["48h", "48 h"], ["7d", "7 days"]]} />
+      {/* Charts */}
+      {!expanded && (
+        <div className="rounded-3xl border border-white/[.07] bg-white/[.025] p-3">
+          <ChartHeader view={view} setView={setView} range={range} setRange={setRange} onExpand={() => setExpanded(true)} />
+          {chartBody}
+          <p className="px-1 pt-1 text-[10px] text-white/30">Drag to scrub · white = what the station measured · HRRR to 48 h, then NOAA NBM · via Open-Meteo</p>
         </div>
-        {view === "forecast"
-          ? (fc.data ? <ForecastChart forecast={fc.data} spot={spot} onScrub={setScrub} range={range} obs={history.data} /> : <Skeleton className="h-44" />)
-          : models.data ? <ModelChart data={models.data} spot={spot} range={range} tz={tz} />
-            : models.isError ? <p className="p-4 text-sm text-rose-300">Couldn't load the model comparison.</p> : <Skeleton className="h-64" />}
-        {view === "forecast" && <Accuracy hours={fc.data ? windowFor(fc.data.hours, "24h") : []} obs={history.data} loading={history.isPending && !!ref} refName={ref?.name} km={ref?.km} />}
-        <p className="px-1 pt-1 text-[10px] text-white/30">Drag to scrub · HRRR to 48 h, then NOAA NBM · via Open-Meteo</p>
-      </div>
+      )}
+      {expanded && createPortal(
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} role="dialog" aria-modal="true" aria-label={`${spot.name} wind charts`}
+          className="fixed inset-0 z-[60] flex flex-col bg-[#05080f]/96 backdrop-blur-xl">
+          <div className="safe-t flex items-center gap-3 px-4 pb-2 md:px-8">
+            <h2 className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight">{spot.name}<span className="ml-2 text-sm font-normal text-white/40">{spot.min}–{spot.max} kn · {arcLabel(spot)}</span></h2>
+            <ChartHeader view={view} setView={setView} range={range} setRange={setRange} idSuffix="-x" />
+            <button onClick={() => setExpanded(false)} aria-label="Close full-screen chart" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-white/70 ring-1 ring-white/15 hover:bg-white/10"><X className="h-5 w-5" /></button>
+          </div>
+          <div className="mx-auto w-full max-w-[1400px] flex-1 overflow-y-auto px-4 pb-6 md:px-8">
+            <div className="mb-3 flex items-end justify-between gap-4">
+              {shown && <div className="num"><span className="text-5xl font-semibold tracking-tighter" style={{ color: windColor(shown.speed) }}>{Math.round(shown.speed)}</span><span className="ml-1 text-lg text-white/40">kn</span>
+                <span className="ml-3 text-sm text-white/55">gust {Math.round(shown.gust)} · {compass(shown.dir)} · {when}</span></div>}
+            </div>
+            {chartBody}
+          </div>
+        </motion.div>, document.body)}
 
       {fc.data && <HourStrip hours={fc.data.hours} tz={tz} spot={spot} />}
     </div>
@@ -201,6 +234,23 @@ function Accuracy({ hours, obs, loading, refName, km }: { hours: Hour[]; obs?: i
         <div className="num text-[11px] text-white/45">avg miss {sc.mae.toFixed(1)} kn · direction {Math.round(sc.dirErr)}° off · {sc.n} h vs {refName}{km != null ? ` (${km < 10 ? km.toFixed(1) : Math.round(km)} km)` : ""}</div>
       </div>
       <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/70">last 24 h</span>
+    </div>
+  );
+}
+
+function ChartHeader({ view, setView, range, setRange, onExpand, idSuffix = "" }: {
+  view: "forecast" | "models"; setView: (v: "forecast" | "models") => void; range: Range; setRange: (r: Range) => void; onExpand?: () => void; idSuffix?: string;
+}) {
+  return (
+    <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
+      <Segmented value={view} onChange={setView} id={`view-pill${idSuffix}`} options={[["forecast", "Forecast"], ["models", "Models"]]} />
+      <div className="flex items-center gap-2">
+        <Segmented value={range} onChange={setRange} id={`range-pill${idSuffix}`} options={[["24h", "Past 24 h"], ["48h", "48 h"], ["7d", "7 days"]]} />
+        {onExpand && (
+          <button onClick={onExpand} aria-label="Expand charts to full screen" title="Full screen"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/[.06] text-white/70 hover:bg-white/15 max-md:h-11 max-md:w-11"><Maximize2 className="h-4 w-4" /></button>
+        )}
+      </div>
     </div>
   );
 }

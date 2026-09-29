@@ -11,6 +11,9 @@ Vite + React 19 + TypeScript. Live wind map and HRRR forecasts for kite spots. N
   (`isRideable`, `rideableWindows`, `rideState` in `lib/wind.ts`).
 - **Forecast vs actual:** last 24 h of 6-min NOAA readings drawn over the model, scored (`scoreForecast`: bias, average
   miss, direction miss) against the spot's station or the nearest NOAA sensor within 25 km.
+- **Charts:** sized to their container (`useChartSize`, drawn 1:1 in CSS px), with a line chart and a colour-coded hourly
+  bar chart sharing one scrub cursor; bar = speed scale, faded cap = gusts, status strip = green rideable / amber wrong
+  direction / grey too light / red too strong. An expand button opens both full screen.
 - **Model comparison:** HRRR, NBM, ECMWF and GFS in one request; the spread between them is the confidence signal.
 - **Spots** live in the browser's localStorage (same `spots` key/shape as v1).
 - MapLibre 6 finds its worker via `import.meta.url`, which breaks once bundled. `scripts/copy-maplibre-worker.mjs`

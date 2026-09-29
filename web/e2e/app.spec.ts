@@ -33,10 +33,32 @@ test("a spot's detail: live vs model, 7 days with NBM, forecast vs actual, model
   await page.getByRole("button", { name: "7 days" }).click();
   await expect(page.getByText("NBM · lower confidence")).toBeVisible();
 
+  // charts are big, and the bars are colour coded (different speeds → different fills; status strip shows the spot's verdict)
+  const line = page.locator('svg[aria-label="7 day wind forecast"]');
+  const bars = page.locator('svg[aria-label^="Hourly wind bars"]');
+  expect((await line.boundingBox())!.height).toBeGreaterThan(240);
+  expect((await bars.boundingBox())!.height).toBeGreaterThan(140);
+  await expect.poll(async () => new Set(await bars.locator("rect[fill^='rgba(']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")))).size).toBeGreaterThan(6);
+  await expect.poll(async () => new Set(await bars.locator("rect[height='7']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")))).size).toBeGreaterThan(1);
+  // scrubbing one chart moves the cursor and readout on the other
+  await bars.scrollIntoViewIfNeeded();
+  const box = (await bars.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.4, box.y + 60);
+  await expect(bars.getByText(/\d+ kn [NESW]+/)).toBeVisible();
+  await expect(line.locator("circle").first()).toBeVisible();
+  await page.mouse.move(0, 0);
+
   await page.getByRole("button", { name: "Past 24 h" }).click();
   await expect(page.getByText(/Model ran 1\.\d kn low/)).toBeVisible(); // mock station reads 1.2 kn above the model
   await expect(page.getByText(/vs Old Port Tampa/)).toBeVisible();
   await expect(page.locator('svg[aria-label*="forecast versus actual"] path[stroke="white"]')).toBeVisible();
+
+  await page.getByRole("button", { name: "Expand charts to full screen" }).click();
+  const dialog = page.getByRole("dialog", { name: /Picnic Island wind charts/ });
+  await expect(dialog).toBeVisible();
+  expect((await dialog.locator('svg[aria-label*="forecast versus actual"]').boundingBox())!.height).toBeGreaterThan(380);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
 
   await page.getByRole("button", { name: "Models" }).click();
   for (const m of ["HRRR", "NBM", "ECMWF", "GFS"]) await expect(page.getByText(m, { exact: true }).first()).toBeVisible();

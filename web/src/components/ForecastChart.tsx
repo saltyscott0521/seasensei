@@ -1,9 +1,10 @@
 import { motion } from "motion/react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
+import { useChartSize } from "./useChartSize";
 import { rideableWindows, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
 
 export type Range = "24h" | "48h" | "7d";
-const W = 640, H = 200, L = 28, R = 8, T = 12, B = 26;
+export const L = 32, R = 10, T = 14, B = 30;
 const HOUR = 3600e3;
 
 /** The forecast hours to draw for a range, and whether they're mostly in the past. */
@@ -19,12 +20,14 @@ export function windowFor(hours: Hour[], range: Range, now = Date.now()) {
  * rideable windows (speed AND direction), NBM hatching, "now", scrubbing, and — when we have
  * them — the station's actual readings drawn over the forecast.
  */
-export function ForecastChart({ forecast, spot, onScrub, range, obs }: {
-  forecast: Forecast; spot: Spot; onScrub: (h: Hour | null) => void; range: Range; obs?: Obs[];
+export function ForecastChart({ forecast, spot, onScrub, range, obs, scrubT, maxH = 560 }: {
+  forecast: Forecast; spot: Spot; onScrub: (h: Hour | null) => void; range: Range; obs?: Obs[]; scrubT?: number | null; maxH?: number;
 }) {
   const hs = useMemo(() => windowFor(forecast.hours, range), [forecast.hours, range]);
   const svgRef = useRef<SVGSVGElement>(null);
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [wrapRef, { w: W, h: H }] = useChartSize(250, 0.62, maxH);
+  // The cursor is owned by the parent so the bar chart below can share it.
+  const cursor = scrubT != null ? hs.reduce((b, h, i) => (Math.abs(h.t - scrubT) < Math.abs(hs[b].t - scrubT) ? i : b), 0) : null;
 
   const m = useMemo(() => {
     const t0 = hs[0].t, t1 = hs[hs.length - 1].t;
@@ -47,7 +50,7 @@ export function ForecastChart({ forecast, spot, onScrub, range, obs }: {
     const wins = rideableWindows(hs, spot);
     const obsLine = seen.length > 1 ? seen.map((o, i) => `${i ? "L" : "M"}${x(o.t).toFixed(1)},${y(o.speed).toFixed(1)}`).join("") : null;
     return { t0, t1, top, x, y, area, speed: line("speed"), gust: line("gust"), ticks, labels, wins, nbmX: nbm ? x(nbm.t) : null, obsLine, seen };
-  }, [hs, obs, spot, range, forecast.timeZone]);
+  }, [hs, obs, spot, range, forecast.timeZone, W, H]);
 
   const now = Date.now();
   const nowX = now >= m.t0 && now <= m.t1 ? m.x(now) : null;
@@ -58,17 +61,17 @@ export function ForecastChart({ forecast, spot, onScrub, range, obs }: {
     const t = m.t0 + ((px - L) / (W - L - R)) * (m.t1 - m.t0);
     let best = 0;
     hs.forEach((h, i) => { if (Math.abs(h.t - t) < Math.abs(hs[best].t - t)) best = i; });
-    setCursor(best);
     onScrub(hs[best]);
   }
-  function onLeave() { setCursor(null); onScrub(null); }
+  function onLeave() { onScrub(null); }
 
   const gradId = `spd-${spot.id}`;
   const c = cursor != null ? hs[cursor] : null;
   const cObs = c ? m.seen.reduce<Obs | null>((b, o) => (Math.abs(o.t - c.t) < 45 * 60e3 && (!b || Math.abs(o.t - c.t) < Math.abs(b.t - c.t)) ? o : b), null) : null;
 
   return (
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full touch-pan-y select-none" role="img"
+    <div ref={wrapRef}>
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block touch-pan-y select-none" role="img"
       aria-label={range === "24h" ? "Past 24 hours, forecast versus actual" : range === "48h" ? "48 hour wind forecast" : "7 day wind forecast"}
       onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={onLeave} onPointerUp={(e) => e.pointerType !== "mouse" && onLeave()}>
       <defs>
@@ -90,7 +93,7 @@ export function ForecastChart({ forecast, spot, onScrub, range, obs }: {
       {m.ticks.map((v) => (
         <g key={v}>
           <line x1={L} x2={W - R} y1={m.y(v)} y2={m.y(v)} stroke="rgb(255 255 255 / .06)" />
-          <text x={L - 6} y={m.y(v) + 3.5} textAnchor="end" fontSize="10" fill="rgb(255 255 255 / .35)" className="num">{v}</text>
+          <text x={L - 6} y={m.y(v) + 3.5} textAnchor="end" fontSize="11" fill="rgb(255 255 255 / .4)" className="num">{v}</text>
         </g>
       ))}
 
@@ -114,7 +117,7 @@ export function ForecastChart({ forecast, spot, onScrub, range, obs }: {
 
       <motion.path key={`a-${range}`} d={m.area} fill={`url(#${gradId})`} mask={`url(#${gradId}-m)`}
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.8 }} />
-      <motion.path key={`g-${range}`} d={m.gust} fill="none" stroke="rgb(255 255 255 / .35)" strokeWidth="1.2" strokeDasharray="2 4"
+      <motion.path key={`g-${range}`} d={m.gust} fill="none" stroke={`url(#${gradId})`} strokeOpacity=".55" strokeWidth="1.4" strokeDasharray="3 4"
         initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.2, ease: "easeOut" }} />
       <motion.path key={`s-${range}`} d={m.speed} fill="none" stroke={`url(#${gradId})`} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"
         initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.1, ease: "easeOut" }} />
@@ -157,5 +160,6 @@ export function ForecastChart({ forecast, spot, onScrub, range, obs }: {
         </g>
       )}
     </svg>
+    </div>
   );
 }
