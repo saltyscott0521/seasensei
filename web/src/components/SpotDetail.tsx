@@ -99,7 +99,7 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
 
       {/* Chart */}
       <div className="rounded-3xl border border-white/[.07] bg-white/[.025] p-3">
-        <div className="mb-1 flex items-center justify-between px-1">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2 px-1">
           <Segmented value={view} onChange={setView} id="view-pill" options={[["forecast", "Forecast"], ["models", "Models"]]} />
           <Segmented value={range} onChange={setRange} id="range-pill" options={[["24h", "Past 24 h"], ["48h", "48 h"], ["7d", "7 days"]]} />
         </div>
@@ -158,7 +158,7 @@ function SpotSettings({ spot, onDeleted }: { spot: Spot; onDeleted: () => void }
   return (
     <div className="flex flex-col gap-5 rounded-3xl border border-white/[.07] bg-white/[.03] p-4">
       <RangeSlider value={[spot.min, spot.max]} onChange={([min, max]) => spotStore.update(spot.id, { min, max })} />
-      <DirectionPicker dirC={spot.dirC} dirW={spot.dirW} onChange={(v) => spotStore.update(spot.id, v)} />
+      <DirectionPicker dirC={spot.dirC} dirW={spot.dirW} lat={spot.lat} lon={spot.lon} onChange={(v) => spotStore.update(spot.id, v)} />
       <StationPicker lat={spot.lat} lon={spot.lon} value={spot.station} onChange={(station) => spotStore.update(spot.id, { station })} />
       <button
         onClick={() => {
@@ -176,7 +176,7 @@ function Segmented<T extends string>({ value, onChange, options, id }: { value: 
   return (
     <div className="relative flex rounded-full bg-white/[.06] p-0.5 text-[11px] font-medium">
       {options.map(([k, label]) => (
-        <button key={k} onClick={() => onChange(k)} aria-pressed={value === k} className="relative rounded-full px-2.5 py-1">
+        <button key={k} onClick={() => onChange(k)} aria-pressed={value === k} className="relative rounded-full px-2.5 py-1 max-md:px-3 max-md:py-2.5">
           {value === k && <motion.span layoutId={id} className="absolute inset-0 rounded-full bg-white/15" transition={{ type: "spring", stiffness: 500, damping: 36 }} />}
           <span className={`relative whitespace-nowrap ${value === k ? "text-white" : "text-white/50"}`}>{label}</span>
         </button>

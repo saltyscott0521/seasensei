@@ -60,6 +60,11 @@ export default function App() {
     : { top: 110, bottom: Math.round(window.innerHeight * 0.5), left: 30, right: 30 }, [desktop]);
 
 
+  const timelineEl = (
+    <Timeline hours={timeline.hours} models={timeline.models} index={Math.min(tIndex, Math.max(0, timeline.hours.length - 1))}
+      onIndex={setTIndex} playing={playing} onPlaying={setPlaying} tz={tz} />
+  );
+
   const panel = (
     <AnimatePresence mode="wait" initial={false}>
       <motion.div key={view.kind === "spot" ? view.id : view.kind}
@@ -124,10 +129,9 @@ export default function App() {
 
       <Legend desktop={desktop} />
 
-      <div className={`absolute z-10 ${desktop ? "bottom-4 left-[432px] right-[64px] max-w-[680px]" : "inset-x-3 bottom-[184px]"}`}>
-        <Timeline hours={timeline.hours} models={timeline.models} index={Math.min(tIndex, Math.max(0, timeline.hours.length - 1))}
-          onIndex={setTIndex} playing={playing} onPlaying={setPlaying} tz={tz} />
-      </div>
+      {desktop && (
+        <div className="absolute bottom-4 left-[432px] right-[64px] z-10 max-w-[680px]">{timelineEl}</div>
+      )}
 
       {desktop ? (
         <motion.aside initial={{ x: -40, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ type: "spring", stiffness: 240, damping: 28, delay: 0.1 }}
@@ -140,6 +144,9 @@ export default function App() {
             <Drawer.Content aria-describedby={undefined}
               className="glass fixed inset-x-0 bottom-0 z-20 flex h-[96dvh] flex-col rounded-t-[28px] border-b-0 outline-none">
               <Drawer.Title className="sr-only">Spots</Drawer.Title>
+              {/* Inside the sheet on purpose: the sheet marks everything outside it aria-hidden, which
+                  would hide the timeline from screen readers. Riding on its top edge keeps it reachable. */}
+              {snap !== SNAPS[2] && <div className="absolute inset-x-3 -top-[88px]">{timelineEl}</div>}
               <div className="mx-auto mb-1 mt-2.5 h-1.5 w-10 shrink-0 rounded-full bg-white/25" />
               <div className={`safe-b flex-1 px-4 pt-2 ${snap === SNAPS[2] ? "overflow-y-auto" : "overflow-hidden"}`}>{panel}</div>
             </Drawer.Content>
