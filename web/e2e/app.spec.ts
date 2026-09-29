@@ -56,7 +56,10 @@ test("a spot's detail: live vs model, 7 days with NBM, forecast vs actual, model
   await page.getByRole("button", { name: "Expand charts to full screen" }).click();
   const dialog = page.getByRole("dialog", { name: /Picnic Island wind charts/ });
   await expect(dialog).toBeVisible();
-  expect((await dialog.locator('svg[aria-label*="forecast versus actual"]').boundingBox())!.height).toBeGreaterThan(380);
+  // bigger than the inline chart, and the bar chart still fits on screen below it
+  expect((await dialog.locator('svg[aria-label*="forecast versus actual"]').boundingBox())!.height).toBeGreaterThan(300);
+  const barsBox = (await dialog.locator('svg[aria-label^="Hourly wind bars"]').boundingBox())!;
+  expect(barsBox.y + barsBox.height).toBeLessThanOrEqual(page.viewportSize()!.height);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 
