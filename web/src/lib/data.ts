@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
 import {
-  buildGrid, forecastUrl, gridPoints, IEM_URL, inBox, parseForecast, parseIem, parseObservation, parseStations, spotsBox,
+  forecastUrl, gridPoints, IEM_URL, parseField, inBox, parseForecast, parseIem, parseObservation, parseStations, spotsBox,
   stationUrl, STATIONS_URL, TAMPA_BAY, type Bounds, type LiveReading, type Spot,
 } from "./wind";
 
@@ -35,27 +35,29 @@ export const useObservation = (station: string | undefined) =>
 export const useStations = () =>
   useQuery({ queryKey: ["stations"], queryFn: () => json(STATIONS_URL).then(parseStations), staleTime: Infinity, gcTime: Infinity });
 
-/** HRRR "current" wind for a grid of points covering the map view — one request, many points. */
-export const useWindGrid = (bounds: Bounds | null) => {
-  const g = bounds ? gridPoints(bounds) : null;
+/**
+ * A week of hourly wind for a grid over the map view, in ONE request (HRRR to 48 h, then NBM).
+ * Scrubbing time is then local and instant. (Fetching hour by hour would cost ~50 Open-Meteo
+ * "calls" per step — a single play-through would blow the free daily quota.)
+ */
+export const useWindField = (bounds: Bounds | null) => {
+  const g = bounds ? gridPoints(bounds, 5) : null;
   return useQuery({
-    queryKey: ["grid", g?.lats[0], g?.lons[0], g?.lats.length, g && g.lats[1] - g.lats[0]],
+    queryKey: ["field", g?.lats[0], g?.lons[0], g?.lats.length, g && g.lats[1] - g.lats[0]],
     enabled: !!g,
-    staleTime: 10 * MIN,
-    refetchInterval: 15 * MIN,
+    staleTime: 20 * MIN,
+    refetchInterval: 30 * MIN,
     placeholderData: (prev) => prev,
     queryFn: async () => {
       const { lats, lons } = g!;
       const la: number[] = [], lo: number[] = [];
       lats.forEach((lat) => lons.forEach((lon) => { la.push(lat); lo.push(lon); }));
       const q = new URLSearchParams({
-        latitude: la.join(","), longitude: lo.join(","),
-        current: "wind_speed_10m,wind_direction_10m", wind_speed_unit: "kn", models: "gfs_hrrr",
+        latitude: la.join(","), longitude: lo.join(","), hourly: "wind_speed_10m,wind_direction_10m",
+        models: "gfs_hrrr,ncep_nbm_conus", wind_speed_unit: "kn", timeformat: "unixtime", forecast_days: "7",
       });
       const res = await json(`https://api.open-meteo.com/v1/forecast?${q}`);
-      const arr = Array.isArray(res) ? res : [res];
-      const pts = arr.map((r: any) => ({ speed: r.current?.wind_speed_10m ?? 0, dir: r.current?.wind_direction_10m ?? 0 }));
-      return { grid: buildGrid(lats, lons, pts), time: arr[0]?.current?.time as string | undefined };
+      return parseField(Array.isArray(res) ? res : [res], lats, lons);
     },
   });
 };

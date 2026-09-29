@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGrid, compass, gridPoints, nearestHour, nearestStations, parseForecast, parseObservation,
-  nearestLive, parseIem, parseStations, rideState, rideableWindows, sample, spotsBox, toUV, windColor,
+  fieldAt, nearestLive, parseField, parseIem, parseStations, rideState, rideableWindows, sample, spotsBox, toUV, windColor,
 } from "./wind";
 
 describe("compass", () => {
@@ -19,6 +19,15 @@ describe("parsers", () => {
       time: [0, 3600, 7200], wind_speed_10m: [10, null, 20], wind_gusts_10m: [15, 1, 25], wind_direction_10m: [90, 90, 180] } });
     expect(f.hours).toHaveLength(2);
     expect(f.hours[1].t).toBe(7_200_000);
+  });
+
+  it("uses HRRR while it lasts, then NBM", () => {
+    const f = parseForecast({ timezone: "UTC", hourly: {
+      time: [0, 3600, 7200],
+      wind_speed_10m_gfs_hrrr: [10, 12, null], wind_gusts_10m_gfs_hrrr: [14, 16, null], wind_direction_10m_gfs_hrrr: [90, 95, null],
+      wind_speed_10m_ncep_nbm_conus: [9, 11, 18], wind_gusts_10m_ncep_nbm_conus: [13, 15, 24], wind_direction_10m_ncep_nbm_conus: [80, 85, 200],
+    } });
+    expect(f.hours.map((h) => [h.speed, h.model])).toEqual([[10, "hrrr"], [12, "hrrr"], [18, "nbm"]]);
   });
 
   it("reads the latest CO-OPS row (string values, GMT times)", () => {
@@ -39,7 +48,7 @@ describe("parsers", () => {
 });
 
 describe("rideable windows", () => {
-  const hrs = [5, 16, 20, 40, 18].map((speed, i) => ({ t: i * 3600e3, speed, gust: speed, dir: 0 }));
+  const hrs = [5, 16, 20, 40, 18].map((speed, i) => ({ t: i * 3600e3, speed, gust: speed, dir: 0, model: "hrrr" as const }));
   it("finds runs inside the range", () => {
     expect(rideableWindows(hrs, 15, 30)).toEqual([{ start: 3600e3, end: 7200e3 }, { start: 14400e3, end: 14400e3 }]);
   });
@@ -117,5 +126,27 @@ describe("live stations", () => {
 
   it("pads the spots' bounding box", () => {
     expect(spotsBox([{ lat: 27.6, lon: -82.7 }], 0.5)).toEqual({ west: -83.2, south: 27.1, east: -82.2, north: 28.1 });
+  });
+});
+
+describe("wind field over time", () => {
+  const point = (hrrr: (number | null)[], nbm: number[]) => ({ hourly: {
+    time: [0, 3600, 7200],
+    wind_speed_10m_gfs_hrrr: hrrr, wind_direction_10m_gfs_hrrr: hrrr.map((x) => (x == null ? null : 270)),
+    wind_speed_10m_ncep_nbm_conus: nbm, wind_direction_10m_ncep_nbm_conus: nbm.map(() => 90),
+  } });
+  const f = parseField([point([10, 12, null], [9, 11, 20])], [27.6], [-82.6]);
+
+  it("takes HRRR while it lasts, then NBM, per hour", () => {
+    expect(f.models).toEqual(["hrrr", "hrrr", "nbm"]);
+    expect(f.speed[0]).toEqual([10, 12, 20]);
+    expect(f.dir[0]).toEqual([270, 270, 90]);
+  });
+
+  it("builds the grid for the nearest hour", () => {
+    const at = fieldAt(f, 7000e3);
+    expect(at.t).toBe(7_200_000);
+    expect(at.model).toBe("nbm");
+    expect(at.grid.speed[0][0]).toBe(20);
   });
 });

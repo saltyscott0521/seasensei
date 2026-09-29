@@ -11,7 +11,7 @@ export function SpotList({ onSelect }: { onSelect: (s: Spot) => void }) {
     <div className="flex flex-col gap-2.5">
       <div className="flex items-baseline justify-between px-1">
         <h2 className="text-sm font-semibold tracking-wide text-white/80">Your spots</h2>
-        <span className="text-xs text-white/40">HRRR · 3 km · hourly</span>
+        <span className="text-xs text-white/40">HRRR 48 h · NBM to 7 days</span>
       </div>
       {spots.length === 0 && (
         <p className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-white/50">
@@ -57,7 +57,7 @@ function SpotCard({ spot, onClick }: { spot: Spot; onClick: () => void }) {
       </div>
       <div className="mt-3 flex items-end justify-between gap-3">
         <span className={next ? "text-xs font-medium text-emerald-300" : "text-xs text-white/40"}>
-          {fc.data ? (next ? `Rideable ${fmtWindow(next, fc.data.timeZone)}` : "No rideable window in the next 48 h") : " "}
+          {fc.data ? (next ? `Rideable ${fmtWindow(next, fc.data.timeZone)}` : "No rideable window this week") : " "}
         </span>
         <Sparkline values={spark} min={spot.min} max={spot.max} width={110} height={26} />
       </div>

@@ -31,8 +31,12 @@ export function useSpotNow(spot: Spot | undefined) {
 export function fmtWindow(w: { start: number; end: number }, tz: string) {
   const d = new Intl.DateTimeFormat([], { timeZone: tz, weekday: "short" });
   const t = new Intl.DateTimeFormat([], { timeZone: tz, hour: "numeric" });
-  const today = d.format(Date.now()) === d.format(w.start);
-  return `${today ? "Today" : d.format(w.start)} ${t.format(w.start)}–${t.format(w.end + 3600e3)}`;
+  const end = w.end + 3600e3;
+  const day = (x: number) => (d.format(Date.now()) === d.format(x) ? "Today" : d.format(x));
+  // Name the end day too when the window runs past midnight.
+  return d.format(w.start) === d.format(end)
+    ? `${day(w.start)} ${t.format(w.start)}–${t.format(end)}`
+    : `${day(w.start)} ${t.format(w.start)} – ${day(end)} ${t.format(end)}`;
 }
 
 export function ago(t: number) {

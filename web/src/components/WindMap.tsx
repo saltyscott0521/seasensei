@@ -5,7 +5,7 @@ import clsx from "clsx";
 import { useLiveStations } from "../lib/data";
 import { ago, useSpotNow } from "../lib/useSpotNow";
 import type { Bounds, LiveReading, Spot, WindGrid } from "../lib/wind";
-import { compass, windColor } from "../lib/wind";
+import { compass, nearestHour, rideState, windColor } from "../lib/wind";
 import { useState } from "react";
 import { WindArrow } from "./bits";
 import { WindParticles } from "./WindParticles";
@@ -23,9 +23,10 @@ type Props = {
   grid: WindGrid | undefined;
   padding: { top: number; bottom: number; left: number; right: number };
   showStations: boolean;
+  at: number | null; // null = now; else a forecast hour (ms)
 };
 
-export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBounds, grid, padding, showStations }: Props) {
+export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBounds, grid, padding, showStations, at }: Props) {
   const initial = useMemo(() => {
     if (!spots.length) return { longitude: -82.6, latitude: 27.75, zoom: 9.5 };
     const lats = spots.map((s) => s.lat), lons = spots.map((s) => s.lon);
@@ -54,9 +55,9 @@ export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBo
       <FlyTo spots={spots} selectedId={selectedId} padding={padding} />
       <NavigationControl position="bottom-right" showCompass={false} />
       <GeolocateControl position="bottom-right" />
-      {showStations && <StationMarkers />}
+      {showStations && at == null && <StationMarkers />}
       {spots.map((s) => (
-        <SpotMarker key={s.id} spot={s} selected={s.id === selectedId} onClick={() => onSelect(s)} dim={addMode} />
+        <SpotMarker key={s.id} spot={s} selected={s.id === selectedId} onClick={() => onSelect(s)} dim={addMode} at={at} />
       ))}
       <AnimatePresence>
         {pin && (
@@ -109,8 +110,11 @@ function FlyTo({ spots, selectedId, padding }: { spots: Spot[]; selectedId: stri
   return null;
 }
 
-function SpotMarker({ spot, selected, onClick, dim }: { spot: Spot; selected: boolean; onClick: () => void; dim: boolean }) {
-  const { now, ride } = useSpotNow(spot);
+function SpotMarker({ spot, selected, onClick, dim, at }: { spot: Spot; selected: boolean; onClick: () => void; dim: boolean; at: number | null }) {
+  const live = useSpotNow(spot);
+  const future = at != null ? nearestHour(live.fc.data?.hours ?? [], at) : null;
+  const now = at != null ? future : live.now;
+  const ride = now ? rideState(now.speed, spot) : null;
   const ring = ride === "good" ? "ring-emerald-400/80" : ride === "above" ? "ring-rose-400/80" : "ring-white/20";
   return (
     <Marker longitude={spot.lon} latitude={spot.lat} anchor="bottom" onClick={(e) => { e.originalEvent.stopPropagation(); onClick(); }}

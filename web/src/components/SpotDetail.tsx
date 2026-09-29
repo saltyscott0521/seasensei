@@ -13,11 +13,13 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
   const { fc, ob, model, now, windows } = useSpotNow(spot);
   const [scrub, setScrub] = useState<Hour | null>(null);
   const [editing, setEditing] = useState(false);
+  const [range, setRange] = useState<"48h" | "7d">("48h");
+  const nbmStart = fc.data?.hours.find((h) => h.model === "nbm")?.t ?? Infinity;
   const tz = fc.data?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const shown = scrub ?? now;
   const ride = shown ? rideState(shown.speed, spot) : null;
   const when = scrub
-    ? new Intl.DateTimeFormat([], { timeZone: tz, weekday: "short", hour: "numeric" }).format(scrub.t) + " · HRRR"
+    ? new Intl.DateTimeFormat([], { timeZone: tz, weekday: "short", hour: "numeric" }).format(scrub.t) + (scrub.model === "nbm" ? " · NBM" : " · HRRR")
     : now?.source === "live" ? `Live · ${now.stationName}${now.km != null ? ` (${now.km < 10 ? now.km.toFixed(1) : Math.round(now.km)} km)` : ""} · ${ago(now.t)}` : "Now · HRRR model";
 
   return (
@@ -80,25 +82,35 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
         <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1">
           {windows.length ? windows.map((w, i) => (
             <motion.span key={w.start} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.05 * i }}
-              className="shrink-0 rounded-full bg-emerald-400/12 px-3 py-1.5 text-xs font-medium text-emerald-200 ring-1 ring-emerald-400/25">
+              title={w.start >= nbmStart ? "NBM (days 3–7): lower confidence" : "HRRR"}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ${w.start >= nbmStart
+                ? "border border-dashed border-emerald-400/35 text-emerald-200/75"
+                : "bg-emerald-400/12 text-emerald-200 ring-1 ring-emerald-400/25"}`}>
               {fmtWindow(w, tz)}
             </motion.span>
-          )) : <span className="text-xs text-white/40">No rideable window in the next 48 h.</span>}
+          )) : <span className="text-xs text-white/40">No rideable window this week.</span>}
         </div>
       )}
 
       {/* Chart */}
       <div className="rounded-3xl border border-white/[.07] bg-white/[.025] p-3">
         <div className="mb-1 flex items-center justify-between px-1">
-          <span className="text-xs font-medium uppercase tracking-wider text-white/45">48 h forecast</span>
+          <div className="relative flex rounded-full bg-white/[.06] p-0.5 text-[11px] font-medium">
+            {(["48h", "7d"] as const).map((r) => (
+              <button key={r} onClick={() => setRange(r)} aria-pressed={range === r} className="relative rounded-full px-2.5 py-1">
+                {range === r && <motion.span layoutId="range-pill" className="absolute inset-0 rounded-full bg-white/15" transition={{ type: "spring", stiffness: 500, damping: 36 }} />}
+                <span className={`relative ${range === r ? "text-white" : "text-white/50"}`}>{r === "48h" ? "48 h" : "7 days"}</span>
+              </button>
+            ))}
+          </div>
           <span className="flex items-center gap-3 text-[10px] text-white/40">
             <span className="flex items-center gap-1"><i className="h-0.5 w-3 rounded bg-gradient-to-r from-cyan-400 to-lime-300" />wind</span>
             <span className="flex items-center gap-1"><i className="w-3 border-t border-dashed border-white/50" />gust</span>
             <span className="flex items-center gap-1"><i className="h-2 w-3 rounded-sm bg-emerald-400/20" />your range</span>
           </span>
         </div>
-        {fc.data ? <ForecastChart forecast={fc.data} spot={spot} onScrub={setScrub} /> : <Skeleton className="h-44" />}
-        <p className="px-1 pt-1 text-[10px] text-white/30">Drag across the chart to scrub · NOAA HRRR via Open-Meteo</p>
+        {fc.data ? <ForecastChart forecast={fc.data} spot={spot} onScrub={setScrub} range={range} /> : <Skeleton className="h-44" />}
+        <p className="px-1 pt-1 text-[10px] text-white/30">Drag to scrub · HRRR to 48 h, then NOAA NBM · via Open-Meteo</p>
       </div>
 
       {fc.data && <HourStrip hours={fc.data.hours} tz={tz} spot={spot} />}
@@ -131,7 +143,7 @@ function HourStrip({ hours, tz, spot }: { hours: Hour[]; tz: string; spot: Spot 
         const midnight = /^12\s?AM$/i.test(label) || label === "0";
         return (
           <div key={h.t} data-now={isNow || undefined}
-            className={`flex w-14 shrink-0 snap-start flex-col items-center gap-1 rounded-2xl py-2.5 ring-1 ${good ? "bg-emerald-400/10 ring-emerald-400/25" : "ring-white/[.06]"} ${isNow ? "!ring-white/50" : ""}`}>
+            className={`flex w-14 shrink-0 snap-start flex-col items-center gap-1 rounded-2xl py-2.5 ring-1 ${h.model === "nbm" ? "opacity-70" : ""} ${good ? "bg-emerald-400/10 ring-emerald-400/25" : "ring-white/[.06]"} ${isNow ? "!ring-white/50" : ""}`}>
             <span className={`text-[10px] ${midnight ? "font-semibold text-white/80" : "text-white/45"}`}>{midnight ? df.format(h.t) : isNow ? "Now" : label}</span>
             <WindArrow dir={h.dir} size={14} className="text-white/70" />
             <span className="num text-base font-semibold" style={{ color: windColor(h.speed) }}>{Math.round(h.speed)}</span>

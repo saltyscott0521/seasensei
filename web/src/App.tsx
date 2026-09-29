@@ -7,8 +7,9 @@ import { AddSpot } from "./components/AddSpot";
 import { SpotDetail } from "./components/SpotDetail";
 import { SpotList } from "./components/SpotList";
 import { WindMap } from "./components/WindMap";
-import { useSpots, useWindGrid } from "./lib/data";
-import type { Bounds, Spot } from "./lib/wind";
+import { useSpots, useWindField } from "./lib/data";
+import { Timeline } from "./components/Timeline";
+import { fieldAt, type Bounds, type Spot } from "./lib/wind";
 
 type View = { kind: "list" } | { kind: "spot"; id: string } | { kind: "add" };
 
@@ -24,8 +25,21 @@ export default function App() {
   const [pin, setPin] = useState<{ lat: number; lon: number } | null>(null);
   const [bounds, setBounds] = useState<Bounds | null>(null);
   const [snap, setSnap] = useState<number | string | null>(SNAPS[0]);
-  const grid = useWindGrid(bounds);
+  const field = useWindField(bounds);
   const [showStations, setShowStations] = useState(true);
+  const [tIndex, setTIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  // Hours from the current one forward; index 0 = now.
+  const timeline = useMemo(() => {
+    const f = field.data;
+    if (!f) return { hours: [] as number[], models: [] as ("hrrr" | "nbm")[] };
+    const start = Math.floor(Date.now() / 3600e3) * 3600e3;
+    const idx = f.times.map((t, i) => [t, i] as const).filter(([t]) => t >= start);
+    return { hours: idx.map(([t]) => t), models: idx.map(([, i]) => f.models[i]) };
+  }, [field.data]);
+  const at = tIndex > 0 ? timeline.hours[tIndex] ?? null : null;
+  const grid = useMemo(() => (field.data ? fieldAt(field.data, at ?? Date.now()).grid : undefined), [field.data, at]);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const spot = view.kind === "spot" ? spots.find((s) => s.id === view.id) : undefined;
   useEffect(() => { if (view.kind === "spot" && !spot) setView({ kind: "list" }); }, [view, spot]);
@@ -45,7 +59,6 @@ export default function App() {
     ? { top: 90, bottom: 40, left: 440, right: 60 }
     : { top: 110, bottom: Math.round(window.innerHeight * 0.5), left: 30, right: 30 }, [desktop]);
 
-  const hrrrTime = grid.data?.time ? new Date(grid.data.time + "Z").toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
 
   const panel = (
     <AnimatePresence mode="wait" initial={false}>
@@ -64,7 +77,7 @@ export default function App() {
       <WindMap spots={spots} selectedId={view.kind === "spot" ? view.id : null} onSelect={select}
         addMode={view.kind === "add"} pin={pin}
         onPin={(p) => { setPin(p); if (!desktop) setSnap(SNAPS[2]); }}
-        onBounds={setBounds} grid={grid.data?.grid} padding={padding} showStations={showStations} />
+        onBounds={setBounds} grid={grid} padding={padding} showStations={showStations} at={at} />
 
       {/* vignette so glass UI reads over the map */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/60 to-transparent" />
@@ -80,7 +93,8 @@ export default function App() {
             <div className="text-[15px] font-semibold tracking-tight">SeaSensei</div>
             <div className="flex items-center gap-1.5 text-[11px] text-white/50">
               <span className="relative flex h-1.5 w-1.5"><span className="ping-soft absolute inset-0 rounded-full bg-emerald-400" /><span className="relative h-1.5 w-1.5 rounded-full bg-emerald-400" /></span>
-              {hrrrTime ? `HRRR wind · ${hrrrTime}` : grid.isError ? "Wind field unavailable" : "Loading wind field…"}
+              {field.data ? (at ? `Forecast · ${new Intl.DateTimeFormat([], { weekday: "short", hour: "numeric" }).format(at)}` : "Live wind · HRRR field")
+                : field.isError ? "Wind field unavailable" : "Loading wind field…"}
             </div>
           </div>
         </motion.div>
@@ -110,6 +124,11 @@ export default function App() {
 
       <Legend desktop={desktop} />
 
+      <div className={`absolute z-10 ${desktop ? "bottom-4 left-[432px] right-[64px] max-w-[680px]" : "inset-x-3 bottom-[184px]"}`}>
+        <Timeline hours={timeline.hours} models={timeline.models} index={Math.min(tIndex, Math.max(0, timeline.hours.length - 1))}
+          onIndex={setTIndex} playing={playing} onPlaying={setPlaying} tz={tz} />
+      </div>
+
       {desktop ? (
         <motion.aside initial={{ x: -40, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ type: "spring", stiffness: 240, damping: 28, delay: 0.1 }}
           className="glass absolute bottom-4 left-4 top-[88px] w-[400px] overflow-y-auto rounded-3xl p-4 no-scrollbar">
@@ -135,7 +154,7 @@ export default function App() {
 
 function Legend({ desktop }: { desktop: boolean }) {
   return (
-    <div className={`glass pointer-events-none absolute rounded-xl px-2.5 py-2 ${desktop ? "bottom-4 left-[432px]" : "left-3 top-[84px]"}`}
+    <div className={`glass pointer-events-none absolute rounded-xl px-2.5 py-2 ${desktop ? "right-[84px] top-[18px]" : "left-3 top-[84px]"}`}
       style={desktop ? undefined : { marginTop: "env(safe-area-inset-top)" }}>
       <div className="h-1.5 w-32 rounded-full"
         style={{ background: "linear-gradient(90deg,#465a8c,#388cdc 20%,#22d3ee 32%,#34d399 42%,#a3e635 55%,#facc15 67%,#fb7124 80%,#ec4899)" }} />

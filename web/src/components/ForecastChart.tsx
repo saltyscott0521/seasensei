@@ -9,8 +9,12 @@ const W = 640, H = 200, L = 28, R = 8, T = 12, B = 26;
  * range as a band, rideable windows highlighted, "now" marker, and pointer
  * scrubbing that reports the hovered hour upward.
  */
-export function ForecastChart({ forecast, spot, onScrub }: { forecast: Forecast; spot: Spot; onScrub: (h: Hour | null) => void }) {
-  const hs = forecast.hours;
+export function ForecastChart({ forecast, spot, onScrub, range }: { forecast: Forecast; spot: Spot; onScrub: (h: Hour | null) => void; range: "48h" | "7d" }) {
+  const hs = useMemo(() => {
+    const from = Date.now() - 6 * 3600e3, to = range === "48h" ? Date.now() + 48 * 3600e3 : Infinity;
+    const r = forecast.hours.filter((h) => h.t >= from && h.t <= to);
+    return r.length > 1 ? r : forecast.hours;
+  }, [forecast.hours, range]);
   const svgRef = useRef<SVGSVGElement>(null);
   const [cursor, setCursor] = useState<number | null>(null);
 
@@ -25,9 +29,12 @@ export function ForecastChart({ forecast, spot, onScrub }: { forecast: Forecast;
     const hourFmt = new Intl.DateTimeFormat([], { timeZone: forecast.timeZone, hour: "numeric" });
     const dayFmt = new Intl.DateTimeFormat([], { timeZone: forecast.timeZone, weekday: "short" });
     const hourOf = (t: number) => Number(new Intl.DateTimeFormat("en-US", { timeZone: forecast.timeZone, hour: "numeric", hourCycle: "h23" }).format(t));
-    const labels = hs.filter((h) => hourOf(h.t) % 6 === 0).map((h) => ({ x: x(h.t), text: hourOf(h.t) === 0 ? dayFmt.format(h.t) : hourFmt.format(h.t), day: hourOf(h.t) === 0 }));
+    const long = t1 - t0 > 80 * 3600e3;
+    const labels = hs.filter((h) => (long ? hourOf(h.t) === 0 || hourOf(h.t) === 12 : hourOf(h.t) % 6 === 0))
+      .map((h) => ({ x: x(h.t), text: hourOf(h.t) === 0 ? dayFmt.format(h.t) : long ? "" : hourFmt.format(h.t), day: hourOf(h.t) === 0 }));
+    const nbm = hs.find((h) => h.model === "nbm");
     const wins = rideableWindows(hs, spot.min, spot.max);
-    return { t0, t1, top, x, y, area, speed: line("speed"), gust: line("gust"), ticks, labels, wins };
+    return { t0, t1, top, x, y, area, speed: line("speed"), gust: line("gust"), ticks, labels, wins, nbmX: nbm ? x(nbm.t) : null };
   }, [hs, spot.min, spot.max, forecast.timeZone]);
 
   const now = Date.now();
@@ -49,7 +56,7 @@ export function ForecastChart({ forecast, spot, onScrub }: { forecast: Forecast;
 
   return (
     <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full touch-pan-y select-none" role="img"
-      aria-label="48 hour HRRR wind forecast" onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={onLeave} onPointerUp={(e) => e.pointerType !== "mouse" && onLeave()}>
+      aria-label={range === "48h" ? "48 hour wind forecast" : "7 day wind forecast"} onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={onLeave} onPointerUp={(e) => e.pointerType !== "mouse" && onLeave()}>
       <defs>
         <linearGradient id={gradId} x1="0" y1={m.y(0)} x2="0" y2={m.y(m.top)} gradientUnits="userSpaceOnUse">
           {[0, 8, 13, 17, 22, 27, 32, 40].filter((k) => k <= m.top).map((k) => (
@@ -61,6 +68,9 @@ export function ForecastChart({ forecast, spot, onScrub }: { forecast: Forecast;
           <stop offset="1" stopColor="white" stopOpacity=".04" />
         </linearGradient>
         <mask id={`${gradId}-m`}><rect width={W} height={H} fill={`url(#${gradId}-fade)`} /></mask>
+        <pattern id={`${gradId}-hatch`} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="6" stroke="rgb(255 255 255 / .05)" strokeWidth="3" />
+        </pattern>
       </defs>
 
       {m.ticks.map((v) => (
@@ -94,6 +104,15 @@ export function ForecastChart({ forecast, spot, onScrub }: { forecast: Forecast;
         initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.2, ease: "easeOut" }} />
       <motion.path d={m.speed} fill="none" stroke={`url(#${gradId})`} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"
         initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.1, ease: "easeOut" }} />
+
+      {m.nbmX != null && (
+        <g pointerEvents="none">
+          <rect x={m.nbmX} width={W - R - m.nbmX} y={T} height={H - T - B} fill={`url(#${gradId}-hatch)`} />
+          <line x1={m.nbmX} x2={m.nbmX} y1={T} y2={H - B} stroke="rgb(250 204 21 / .45)" strokeDasharray="3 3" />
+          <text x={m.nbmX - 4} y={T + 9} textAnchor="end" fontSize="9" fontWeight="600" fill="rgb(255 255 255 / .45)">HRRR</text>
+          <text x={m.nbmX + 4} y={T + 9} fontSize="9" fontWeight="600" fill="rgb(250 204 21 / .75)">NBM · lower confidence</text>
+        </g>
+      )}
 
       {nowX != null && (
         <g>
