@@ -232,17 +232,17 @@ export function sample(g: WindGrid, lat: number, lon: number) {
 
 /**
  * Wind speed → colour, a smooth gradient anchored to the ranges riders think in:
- * green holds through ~15–20 kn, orange ~20–30, red ~30–40. Each colour is flat across the core of its
- * range and blends into its neighbour near the edges, so a colour still means roughly the same range.
+ * green holds through ~15–20 kn, purple ~20–30, red from ~30 (deepening past 40, red is the top).
+ * Each colour is flat across the core of its range and blends into its neighbour near the edges.
  */
 const STOPS: [number, [number, number, number]][] = [
   [0, [100, 116, 139]],  // calm: slate
   [6, [59, 130, 246]],   // blue
   [11, [34, 211, 238]], [13, [34, 211, 238]], // cyan
   [16, [34, 197, 94]], [19, [34, 197, 94]],   // 15–20: green
-  [22, [249, 115, 22]], [28, [249, 115, 22]], // 20–30: orange
+  [22, [168, 85, 247]], [28, [168, 85, 247]], // 20–30: purple
   [32, [239, 68, 68]], [38, [239, 68, 68]],   // 30–40: red
-  [42, [192, 38, 211]],                       // 40+: purple
+  [44, [185, 28, 28]],                        // 40+: deep red
 ];
 
 const rgbAt = (kn: number): [number, number, number] => {

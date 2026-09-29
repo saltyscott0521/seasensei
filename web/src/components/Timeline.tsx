@@ -106,15 +106,18 @@ export function Timeline({ hours, models, area, threshold, index, onIndex, playi
         </div>
       </div>
 
-      <AnimatePresence>
-        {index > 0 && (
-          <motion.button initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
-            onClick={() => seek(0)} aria-label="Back to now"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/70 ring-1 ring-white/15 hover:bg-white/10">
-            <RotateCcw className="h-4 w-4" />
-          </motion.button>
-        )}
-      </AnimatePresence>
+      {/* A fixed slot: the button appearing mustn't resize the chart under your finger. */}
+      <div className="h-9 w-9 shrink-0">
+        <AnimatePresence>
+          {index > 0 && (
+            <motion.button initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
+              onClick={() => seek(0)} aria-label="Back to now"
+              className="grid h-9 w-9 place-items-center rounded-full text-white/70 ring-1 ring-white/15 hover:bg-white/10">
+              <RotateCcw className="h-4 w-4" />
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

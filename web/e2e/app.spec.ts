@@ -41,10 +41,10 @@ test("a spot's detail: live vs model, 7 days with NBM, forecast vs actual, model
   expect((await line.boundingBox())!.height).toBeGreaterThan(240);
   expect((await bars.boundingBox())!.height).toBeGreaterThan(140);
   await expect.poll(async () => new Set(await bars.locator("rect[fill^='rgba(']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")))).size).toBeGreaterThan(6);
-  // the scale follows the rider's ranges: 15–20 kn green, 20–30 kn orange (mock wind swings 8–24 kn)
+  // the scale follows the rider's ranges: 15–20 kn green, 20–30 kn purple (mock wind swings 8–24 kn)
   const fills = () => bars.locator("rect[fill^='rgba(']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")));
   await expect.poll(async () => (await fills()).includes("rgba(34,197,94,1)")).toBe(true);
-  await expect.poll(async () => (await fills()).includes("rgba(249,115,22,1)")).toBe(true);
+  await expect.poll(async () => (await fills()).includes("rgba(168,85,247,1)")).toBe(true);
   await expect.poll(async () => new Set(await bars.locator("rect[height='7']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")))).size).toBeGreaterThan(1);
   // scrubbing one chart moves the cursor and readout on the other
   await bars.scrollIntoViewIfNeeded();
@@ -139,8 +139,13 @@ test("the timeline scrubs the week: header, markers and station layer follow the
     await expect(page.getByText(/^Forecast · /)).toBeVisible();
     await page.getByRole("button", { name: "Back to now" }).click();
   }
-  // tapping the chart seeks: halfway along the chart ≈ halfway through the week
+  // tapping the chart seeks: halfway along the chart ≈ halfway through the week,
+  // and leaving "now" must not resize the chart under your finger
   const box = (await chart.boundingBox())!;
+  await slider.focus();
+  await page.keyboard.press("ArrowRight");
+  expect((await chart.boundingBox())!.width).toBe(box.width);
+  await page.keyboard.press("Home");
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   const max = Number(await slider.getAttribute("aria-valuemax"));
   await expect.poll(async () => Math.abs(Number(await slider.getAttribute("aria-valuenow")) - max / 2)).toBeLessThan(4);
