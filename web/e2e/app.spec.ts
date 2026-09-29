@@ -36,6 +36,8 @@ test("a spot's detail: live vs model, 7 days with NBM, forecast vs actual, model
   // charts are big, and the bars are colour coded (different speeds → different fills; status strip shows the spot's verdict)
   const line = page.locator('svg[aria-label="7 day wind forecast"]');
   const bars = page.locator('svg[aria-label^="Hourly wind bars"]');
+  await expect(line).toBeVisible();
+  await expect(bars).toBeVisible();
   expect((await line.boundingBox())!.height).toBeGreaterThan(240);
   expect((await bars.boundingBox())!.height).toBeGreaterThan(140);
   await expect.poll(async () => new Set(await bars.locator("rect[fill^='rgba(']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")))).size).toBeGreaterThan(6);
@@ -124,6 +126,26 @@ test("add a spot by tapping the map", async ({ page }) => {
 test("the timeline scrubs the week: header, markers and station layer follow the chosen hour", async ({ page }) => {
   const slider = page.getByRole("slider", { name: "Forecast time" });
   await expect(slider).toBeVisible();
+
+  // the week's outlook for the area in view: a chart plus a headline you can tap to jump there
+  const chart = page.getByRole("img", { name: "Wind in view over the next week" });
+  await expect(chart.locator("path")).toHaveCount(2); // typical (filled) + strongest in view
+  const outlook = page.getByTestId("outlook");
+  await expect(outlook).toHaveText(/Windy now: up to \d+ kn in view|Wind on the way: .+ up to \d+ kn|No 15\+ kn in view this week/);
+  const text = (await outlook.textContent())!;
+  if (text.startsWith("Wind on the way")) {
+    await outlook.click();
+    await expect.poll(async () => Number(await slider.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
+    await expect(page.getByText(/^Forecast · /)).toBeVisible();
+    await page.getByRole("button", { name: "Back to now" }).click();
+  }
+  // tapping the chart seeks: halfway along the chart ≈ halfway through the week
+  const box = (await chart.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const max = Number(await slider.getAttribute("aria-valuemax"));
+  await expect.poll(async () => Math.abs(Number(await slider.getAttribute("aria-valuenow")) - max / 2)).toBeLessThan(4);
+  await page.getByRole("button", { name: "Back to now" }).click();
+  await expect(page.getByText("Live wind · HRRR field")).toBeVisible();
   const nowMarker = await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto']").getAttribute("aria-label");
 
   await slider.focus();

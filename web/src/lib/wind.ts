@@ -387,3 +387,20 @@ export function agreement(c: ModelCompare, from: number, to: number) {
   const avg = sp.reduce((a, x) => a + x.spread, 0) / sp.length;
   return { avg, label: avg <= 3 ? "Models agree" : avg <= 6 ? "Some disagreement" : "Models disagree", level: avg <= 3 ? "high" : avg <= 6 ? "mid" : "low" } as const;
 }
+
+/**
+ * The wind across the whole visible area at hour i: typical (mean), strongest (90th percentile, so one
+ * odd grid point doesn't set it) and a speed-weighted mean direction.
+ */
+export function areaStats(f: WindField, i: number) {
+  const pts = f.speed.flatMap((s, p) => (s[i] != null && f.dir[p][i] != null ? [{ s: s[i]!, d: f.dir[p][i]! }] : []));
+  if (!pts.length) return null;
+  const sorted = pts.map((p) => p.s).sort((a, b) => a - b);
+  const u = pts.reduce((a, p) => a + p.s * Math.sin((p.d * Math.PI) / 180), 0);
+  const v = pts.reduce((a, p) => a + p.s * Math.cos((p.d * Math.PI) / 180), 0);
+  return {
+    mean: sorted.reduce((a, x) => a + x, 0) / sorted.length,
+    peak: sorted[Math.floor(0.9 * (sorted.length - 1))],
+    dir: ((Math.atan2(u, v) * 180) / Math.PI + 360) % 360,
+  };
+}

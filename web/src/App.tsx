@@ -9,7 +9,7 @@ import { SpotList } from "./components/SpotList";
 import { WindMap } from "./components/WindMap";
 import { useSpots, useWindField } from "./lib/data";
 import { Timeline } from "./components/Timeline";
-import { windGradient, fieldAt, type Bounds, type Spot } from "./lib/wind";
+import { areaStats, windGradient, fieldAt, type Bounds, type Spot } from "./lib/wind";
 
 type View = { kind: "list" } | { kind: "spot"; id: string } | { kind: "add" };
 
@@ -32,12 +32,14 @@ export default function App() {
   // Hours from the current one forward; index 0 = now.
   const timeline = useMemo(() => {
     const f = field.data;
-    if (!f) return { hours: [] as number[], models: [] as ("hrrr" | "nbm")[] };
+    if (!f) return { hours: [] as number[], models: [] as ("hrrr" | "nbm")[], area: [] as ReturnType<typeof areaStats>[] };
     const start = Math.floor(Date.now() / 3600e3) * 3600e3;
     const idx = f.times.map((t, i) => [t, i] as const).filter(([t]) => t >= start);
-    return { hours: idx.map(([t]) => t), models: idx.map(([, i]) => f.models[i]) };
+    return { hours: idx.map(([t]) => t), models: idx.map(([, i]) => f.models[i]), area: idx.map(([, i]) => areaStats(f, i)) };
   }, [field.data]);
   const at = tIndex > 0 ? timeline.hours[tIndex] ?? null : null;
+  // "Wind" means at least what your lightest-wind spot needs.
+  const threshold = spots.length ? Math.min(...spots.map((s) => s.min)) : 15;
   const grid = useMemo(() => (field.data ? fieldAt(field.data, at ?? Date.now()).grid : undefined), [field.data, at]);
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -61,7 +63,8 @@ export default function App() {
 
 
   const timelineEl = (
-    <Timeline hours={timeline.hours} models={timeline.models} index={Math.min(tIndex, Math.max(0, timeline.hours.length - 1))}
+    <Timeline hours={timeline.hours} models={timeline.models} area={timeline.area} threshold={threshold}
+      index={Math.min(tIndex, Math.max(0, timeline.hours.length - 1))}
       onIndex={setTIndex} playing={playing} onPlaying={setPlaying} tz={tz} />
   );
 
@@ -146,7 +149,7 @@ export default function App() {
               <Drawer.Title className="sr-only">Spots</Drawer.Title>
               {/* Inside the sheet on purpose: the sheet marks everything outside it aria-hidden, which
                   would hide the timeline from screen readers. Riding on its top edge keeps it reachable. */}
-              {snap !== SNAPS[2] && <div className="absolute inset-x-3 -top-[88px]">{timelineEl}</div>}
+              {snap !== SNAPS[2] && <div className="absolute inset-x-3 -top-[176px]">{timelineEl}</div>}
               <div className="mx-auto mb-1 mt-2.5 h-1.5 w-10 shrink-0 rounded-full bg-white/25" />
               <div className={`safe-b flex-1 px-4 pt-2 ${snap === SNAPS[2] ? "overflow-y-auto" : "overflow-hidden"}`}>{panel}</div>
             </Drawer.Content>

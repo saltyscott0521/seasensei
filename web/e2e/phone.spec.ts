@@ -6,6 +6,12 @@ test("phone: bottom sheet, spot detail, timeline; nothing scrolls sideways", asy
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible();
   await expect(page.getByRole("slider", { name: "Forecast time" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Wind in view over the next week" })).toBeVisible();
+  // the timeline card sits fully above the sheet, not under it
+  const card = (await page.getByTestId("outlook").locator("xpath=ancestor::div[contains(@class,'glass')][1]").boundingBox())!;
+  const sheet = (await page.locator("[data-vaul-drawer]").boundingBox())!;
+  expect(card.y).toBeGreaterThan(0);
+  expect(card.y + card.height).toBeLessThanOrEqual(sheet.y);
 
   await page.getByRole("heading", { name: "Fort De Soto" }).click(); // the peek snap shows the first card; the rest need a drag up
   await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
