@@ -1,14 +1,21 @@
-# SeaSensei web
+# SeaSensei web (v2)
 
-Mobile-first PWA version of the app: HRRR forecast (Open-Meteo) plus live NOAA CO-OPS wind.
-No build step, no backend, no API keys. Spots live in the browser's localStorage.
+Vite + React 19 + TypeScript. Live wind map and HRRR forecasts for kite spots. No backend, no API keys.
+
+- **Map:** MapLibre (OpenFreeMap dark style) with an animated HRRR wind-particle layer (`WindParticles.tsx`) fed by a
+  multi-point Open-Meteo request covering the visible area.
+- **Data:** TanStack Query. Open-Meteo `gfs_hrrr` per spot, NOAA CO-OPS live station wind, NOAA station list
+  (auto-suggests the nearest station for new spots).
+- **UI:** Tailwind v4, Motion, Vaul (bottom sheet on phones), NumberFlow, Radix Slider, Sonner, Lucide.
+- **Spots** live in the browser's localStorage (same `spots` key/shape as v1).
+- MapLibre 6 finds its worker via `import.meta.url`, which breaks once bundled. `scripts/copy-maplibre-worker.mjs`
+  (run by `predev`/`prebuild`) copies it to `public/maplibre/<version>/`, and `main.tsx` calls `setWorkerUrl`.
 
 ```bash
-node web/test.mjs                          # logic tests
-python3 -m http.server 8123 --directory web  # run locally
+npm install
+npm run dev     # http://localhost:5173
+npm test        # vitest: src/lib/wind.test.ts
+npm run build
 ```
 
-Deploy (Hetzner/Coolify, same as the other apps): Dockerfile app, base directory `/web`,
-port 80, domain e.g. `seasensei.tracebi.com` (Coolify domain `http://<host>` + Cloudflare tunnel
-route to `localhost:80` + proxied CNAME to `<tunnel-id>.cfargotunnel.com`). Then on iPhone:
-Safari → Share → Add to Home Screen.
+Deploy: Coolify app (project "SeaSensei") builds `web/Dockerfile` (node build → nginx), port 80, on push to `main`.
