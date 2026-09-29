@@ -18,7 +18,7 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
   const ride = shown ? rideState(shown.speed, spot) : null;
   const when = scrub
     ? new Intl.DateTimeFormat([], { timeZone: tz, weekday: "short", hour: "numeric" }).format(scrub.t) + " · HRRR"
-    : now?.source === "live" ? `Live · ${ob.data!.name} · ${ago(ob.data!.t)}` : "Now · HRRR model";
+    : now?.source === "live" ? `Live · ${now.stationName}${now.km != null ? ` (${now.km < 10 ? now.km.toFixed(1) : Math.round(now.km)} km)` : ""} · ${ago(now.t)}` : "Now · HRRR model";
 
   return (
     <div className="flex flex-col gap-4">

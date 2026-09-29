@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
-import { Plus, Waves } from "lucide-react";
+import { Plus, Radio, Waves } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Drawer } from "vaul";
 import { Toaster } from "sonner";
@@ -25,6 +25,7 @@ export default function App() {
   const [bounds, setBounds] = useState<Bounds | null>(null);
   const [snap, setSnap] = useState<number | string | null>(SNAPS[0]);
   const grid = useWindGrid(bounds);
+  const [showStations, setShowStations] = useState(true);
 
   const spot = view.kind === "spot" ? spots.find((s) => s.id === view.id) : undefined;
   useEffect(() => { if (view.kind === "spot" && !spot) setView({ kind: "list" }); }, [view, spot]);
@@ -63,7 +64,7 @@ export default function App() {
       <WindMap spots={spots} selectedId={view.kind === "spot" ? view.id : null} onSelect={select}
         addMode={view.kind === "add"} pin={pin}
         onPin={(p) => { setPin(p); if (!desktop) setSnap(SNAPS[2]); }}
-        onBounds={setBounds} grid={grid.data?.grid} padding={padding} />
+        onBounds={setBounds} grid={grid.data?.grid} padding={padding} showStations={showStations} />
 
       {/* vignette so glass UI reads over the map */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/60 to-transparent" />
@@ -83,11 +84,18 @@ export default function App() {
             </div>
           </div>
         </motion.div>
+        <div className="pointer-events-auto flex flex-col gap-2">
         <motion.button initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.05, type: "spring", stiffness: 300, damping: 26 }}
           whileTap={{ scale: 0.92 }} onClick={view.kind === "add" ? back : startAdd} aria-label={view.kind === "add" ? "Cancel adding a spot" : "Add a spot"}
-          className="glass pointer-events-auto grid h-[52px] w-[52px] place-items-center rounded-2xl">
+          className="glass grid h-[52px] w-[52px] place-items-center rounded-2xl">
           <motion.span animate={{ rotate: view.kind === "add" ? 45 : 0 }}><Plus className="h-6 w-6" /></motion.span>
         </motion.button>
+          <motion.button initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1, type: "spring", stiffness: 300, damping: 26 }}
+            whileTap={{ scale: 0.92 }} onClick={() => setShowStations((v) => !v)} aria-pressed={showStations} aria-label="Show live stations"
+            className={`glass grid h-[52px] w-[52px] place-items-center rounded-2xl transition-colors ${showStations ? "!bg-cyan-400/20 text-cyan-200" : "text-white/60"}`}>
+            <Radio className="h-5 w-5" />
+          </motion.button>
+        </div>
       </header>
 
       <AnimatePresence>
@@ -127,7 +135,7 @@ export default function App() {
 
 function Legend({ desktop }: { desktop: boolean }) {
   return (
-    <div className={`glass pointer-events-none absolute rounded-xl px-2.5 py-2 ${desktop ? "bottom-4 left-[432px]" : "right-3 top-[84px]"}`}
+    <div className={`glass pointer-events-none absolute rounded-xl px-2.5 py-2 ${desktop ? "bottom-4 left-[432px]" : "left-3 top-[84px]"}`}
       style={desktop ? undefined : { marginTop: "env(safe-area-inset-top)" }}>
       <div className="h-1.5 w-32 rounded-full"
         style={{ background: "linear-gradient(90deg,#465a8c,#388cdc 20%,#22d3ee 32%,#34d399 42%,#a3e635 55%,#facc15 67%,#fb7124 80%,#ec4899)" }} />

@@ -15,6 +15,45 @@ export type Forecast = { timeZone: string; hours: Hour[] };
 export type Observation = { name: string; t: number; speed: number; gust: number; dir: number };
 export type Station = { id: string; name: string; lat: number; lon: number };
 export type Window = { start: number; end: number };
+/** A live station reading from any source, normalised to knots / degrees FROM. */
+export type LiveReading = {
+  id: string; source: "noaa" | "airport"; name: string; lat: number; lon: number;
+  speed: number; gust: number | null; dir: number; t: number;
+};
+
+export const IEM_URL = (network: string) => `https://mesonet.agron.iastate.edu/api/1/currents.json?network=${network}`;
+
+/** Iowa Environmental Mesonet "currents" (airport ASOS/AWOS): sknt/gust in knots, drct degrees, utc_valid ISO. */
+export function parseIem(json: any): LiveReading[] {
+  return (json.data ?? [])
+    .filter((r: any) => Number.isFinite(r.sknt) && Number.isFinite(r.lat) && Number.isFinite(r.lon) && r.utc_valid)
+    .map((r: any) => ({
+      id: `K${r.station}`, source: "airport" as const, name: AIRPORT_NAMES[r.station] ?? titleCase(r.name ?? r.station), lat: r.lat, lon: r.lon,
+      speed: r.sknt, gust: Number.isFinite(r.gust) ? r.gust : null, dir: Number.isFinite(r.drct) ? r.drct : 0,
+      t: Date.parse(r.utc_valid),
+    }));
+}
+// What locals call them (the feed has two different "St Petersburg"s).
+const AIRPORT_NAMES: Record<string, string> = {
+  SPG: "Albert Whitted (SPG)", PIE: "St. Pete–Clearwater (PIE)", TPF: "Peter O. Knight (TPF)", MCF: "MacDill AFB (MCF)",
+  TPA: "Tampa Intl (TPA)", VDF: "Tampa Executive (VDF)", CLW: "Clearwater Air Park (CLW)", SRQ: "Sarasota–Bradenton (SRQ)",
+};
+const titleCase = (s: string) => (s === s.toUpperCase() ? s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : s);
+
+export const inBox = (lat: number, lon: number, b: Bounds) => lat >= b.south && lat <= b.north && lon >= b.west && lon <= b.east;
+
+/** Bounding box of the spots, padded; the area we pull live stations for. */
+export function spotsBox(spots: { lat: number; lon: number }[], pad = 0.35): Bounds {
+  if (!spots.length) return { west: -83.1, south: 27.3, east: -82.2, north: 28.2 };
+  const lats = spots.map((s) => s.lat), lons = spots.map((s) => s.lon);
+  return { west: Math.min(...lons) - pad, south: Math.min(...lats) - pad, east: Math.max(...lons) + pad, north: Math.max(...lats) + pad };
+}
+
+/** Nearest live reading within maxKm, preferring NOAA's 6-minute sensors over hourly airport reports. */
+export function nearestLive(readings: LiveReading[], lat: number, lon: number, maxKm = 16) {
+  const withKm = readings.map((r) => ({ ...r, km: distanceKm(lat, lon, r.lat, r.lon) })).filter((r) => r.km <= maxKm);
+  return withKm.sort((a, b) => (a.source === b.source ? a.km - b.km : a.source === "noaa" ? -1 : 1))[0] ?? null;
+}
 
 const POINTS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
 export const compass = (deg: number) => POINTS[Math.floor((((deg % 360) + 360) % 360) / 22.5 + 0.5) % 16];

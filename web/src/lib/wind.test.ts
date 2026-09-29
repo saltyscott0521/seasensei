@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGrid, compass, gridPoints, nearestHour, nearestStations, parseForecast, parseObservation,
-  parseStations, rideState, rideableWindows, sample, toUV, windColor,
+  nearestLive, parseIem, parseStations, rideState, rideableWindows, sample, spotsBox, toUV, windColor,
 } from "./wind";
 
 describe("compass", () => {
@@ -91,5 +91,31 @@ describe("wind field", () => {
     expect(windColor(0)).toBe("rgba(70,90,140,1)");
     expect(windColor(17)).toBe("rgba(52,211,153,1)");
     expect(windColor(99, 0.5)).toBe("rgba(236,72,153,0.5)");
+  });
+});
+
+describe("live stations", () => {
+  it("parses IEM airport currents and skips rows without wind", () => {
+    const r = parseIem({ data: [
+      { station: "TPF", name: "Tampa/Knight", lat: 27.92, lon: -82.45, sknt: 9, gust: 15, drct: 240, utc_valid: "2026-09-29T02:55:00Z" },
+      { station: "SPG", name: "ST PETERSBURG", lat: 27.77, lon: -82.63, sknt: null, drct: 0, utc_valid: "2026-09-29T02:55:00Z" },
+    ] });
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ id: "KTPF", source: "airport", speed: 9, gust: 15, dir: 240, t: Date.UTC(2026, 8, 29, 2, 55) });
+  });
+
+  it("prefers a NOAA sensor over a closer airport, within range", () => {
+    const base = { gust: null, dir: 0, t: 0, speed: 5 };
+    const rs = [
+      { ...base, id: "KX", source: "airport" as const, name: "Airport", lat: 27.63, lon: -82.66 },
+      { ...base, id: "8726412", source: "noaa" as const, name: "Middle Tampa Bay", lat: 27.662, lon: -82.6 },
+      { ...base, id: "far", source: "noaa" as const, name: "Far", lat: 29, lon: -82 },
+    ];
+    expect(nearestLive(rs, 27.628, -82.66)?.id).toBe("8726412");
+    expect(nearestLive(rs, 30.5, -80)).toBeNull();
+  });
+
+  it("pads the spots' bounding box", () => {
+    expect(spotsBox([{ lat: 27.6, lon: -82.7 }], 0.5)).toEqual({ west: -83.2, south: 27.1, east: -82.2, north: 28.1 });
   });
 });

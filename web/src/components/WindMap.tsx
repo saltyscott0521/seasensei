@@ -2,9 +2,11 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef } from "react";
 import Map, { GeolocateControl, Marker, NavigationControl, useMap, type MapLayerMouseEvent } from "react-map-gl/maplibre";
 import clsx from "clsx";
-import { useSpotNow } from "../lib/useSpotNow";
-import type { Bounds, Spot, WindGrid } from "../lib/wind";
-import { windColor } from "../lib/wind";
+import { useLiveStations } from "../lib/data";
+import { ago, useSpotNow } from "../lib/useSpotNow";
+import type { Bounds, LiveReading, Spot, WindGrid } from "../lib/wind";
+import { compass, windColor } from "../lib/wind";
+import { useState } from "react";
 import { WindArrow } from "./bits";
 import { WindParticles } from "./WindParticles";
 
@@ -20,9 +22,10 @@ type Props = {
   onBounds: (b: Bounds) => void;
   grid: WindGrid | undefined;
   padding: { top: number; bottom: number; left: number; right: number };
+  showStations: boolean;
 };
 
-export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBounds, grid, padding }: Props) {
+export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBounds, grid, padding, showStations }: Props) {
   const initial = useMemo(() => {
     if (!spots.length) return { longitude: -82.6, latitude: 27.75, zoom: 9.5 };
     const lats = spots.map((s) => s.lat), lons = spots.map((s) => s.lon);
@@ -51,6 +54,7 @@ export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBo
       <FlyTo spots={spots} selectedId={selectedId} padding={padding} />
       <NavigationControl position="bottom-right" showCompass={false} />
       <GeolocateControl position="bottom-right" />
+      {showStations && <StationMarkers />}
       {spots.map((s) => (
         <SpotMarker key={s.id} spot={s} selected={s.id === selectedId} onClick={() => onSelect(s)} dim={addMode} />
       ))}
@@ -125,6 +129,45 @@ function SpotMarker({ spot, selected, onClick, dim }: { spot: Spot; selected: bo
         </div>
         <span className="mt-0.5 max-w-[9rem] truncate rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white/85 backdrop-blur">{spot.name}</span>
         <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_8px_white]" />
+      </motion.button>
+    </Marker>
+  );
+}
+
+/** Every live sensor as a compact marker; tap one for its name, gust and age. */
+function StationMarkers() {
+  const live = useLiveStations();
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <>
+      {(live.data ?? []).map((r) => (
+        <StationMarker key={r.id} r={r} open={open === r.id} onToggle={() => setOpen((o) => (o === r.id ? null : r.id))} />
+      ))}
+    </>
+  );
+}
+
+function StationMarker({ r, open, onToggle }: { r: LiveReading; open: boolean; onToggle: () => void }) {
+  const c = windColor(r.speed);
+  return (
+    <Marker longitude={r.lon} latitude={r.lat} anchor="center" style={{ zIndex: open ? 9 : 0 }}
+      onClick={(e) => { e.originalEvent.stopPropagation(); onToggle(); }}>
+      <motion.button initial={{ scale: 0 }} animate={{ scale: 1 }} whileHover={{ scale: 1.1 }}
+        aria-label={`${r.name}: ${Math.round(r.speed)} knots from ${compass(r.dir)}`}
+        className="relative flex items-center gap-1 rounded-lg border border-white/10 bg-slate-950/75 px-1.5 py-0.5 backdrop-blur">
+        <span style={{ color: c }}>{r.speed > 0.5 ? <WindArrow dir={r.dir} size={11} /> : <span className="block h-1.5 w-1.5 rounded-full bg-current" />}</span>
+        <span className="num text-[11px] font-semibold" style={{ color: c }}>{Math.round(r.speed)}</span>
+        <span className="text-[9px] text-white/40">{r.source === "airport" ? "✈" : "◉"}</span>
+        <AnimatePresence>
+          {open && (
+            <motion.span initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
+              className="glass absolute bottom-full left-1/2 mb-1.5 w-max max-w-[14rem] -translate-x-1/2 rounded-xl px-2.5 py-1.5 text-left text-[11px] leading-snug">
+              <span className="block font-semibold text-white">{r.name}</span>
+              <span className="num block text-white/70">{Math.round(r.speed)} kn{r.gust != null ? ` · g${Math.round(r.gust)}` : ""} · {compass(r.dir)}</span>
+              <span className="block text-white/40">{r.source === "airport" ? "Airport (hourly)" : "NOAA PORTS (6-min)"} · {ago(r.t)}</span>
+            </motion.span>
+          )}
+        </AnimatePresence>
       </motion.button>
     </Marker>
   );

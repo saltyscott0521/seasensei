@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
 import {
-  buildGrid, forecastUrl, gridPoints, parseForecast, parseObservation, parseStations, stationUrl,
-  STATIONS_URL, TAMPA_BAY, type Bounds, type Spot,
+  buildGrid, forecastUrl, gridPoints, IEM_URL, inBox, parseForecast, parseIem, parseObservation, parseStations, spotsBox,
+  stationUrl, STATIONS_URL, TAMPA_BAY, type Bounds, type LiveReading, type Spot,
 } from "./wind";
 
 async function json(url: string) {
@@ -59,6 +59,36 @@ export const useWindGrid = (bounds: Bounds | null) => {
     },
   });
 };
+
+/**
+ * Every live wind reading around the spots: NOAA CO-OPS/PORTS sensors (6-minute) and airport
+ * ASOS/AWOS via the Iowa Environmental Mesonet (about hourly). Both allow browser requests.
+ */
+export function useLiveStations() {
+  const all = useSpots();
+  const stations = useStations();
+  const box = spotsBox(all);
+  const coops = (stations.data ?? []).filter((s) => inBox(s.lat, s.lon, box));
+  return useQuery({
+    queryKey: ["live", box.west.toFixed(2), box.south.toFixed(2), box.east.toFixed(2), box.north.toFixed(2), coops.length],
+    enabled: stations.isSuccess,
+    staleTime: 3 * MIN,
+    refetchInterval: 6 * MIN,
+    placeholderData: (prev) => prev,
+    queryFn: async (): Promise<LiveReading[]> => {
+      const noaa = await Promise.allSettled(coops.map((s) =>
+        json(stationUrl(s.id)).then(parseObservation).then((o): LiveReading => ({
+          id: s.id, source: "noaa", name: s.name, lat: s.lat, lon: s.lon, speed: o.speed, gust: o.gust, dir: o.dir, t: o.t,
+        }))));
+      const air = await json(IEM_URL("FL_ASOS")).then(parseIem).catch(() => [] as LiveReading[]);
+      const fresh = (r: LiveReading) => Date.now() - r.t < 6 * 3600e3;
+      return [
+        ...noaa.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])),
+        ...air.filter((r) => inBox(r.lat, r.lon, box)),
+      ].filter(fresh);
+    },
+  });
+}
 
 /* ---------- Spots: localStorage, same key/shape as v1 so saved spots carry over ---------- */
 
