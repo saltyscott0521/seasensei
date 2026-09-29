@@ -8,7 +8,24 @@ export type Spot = {
   min: number; // knots, bottom of the range this spot is ridden in
   max: number;
   station?: string; // NOAA CO-OPS station id for live wind
+  /** Wind directions (FROM, degrees) this spot works in: centre ± width/2. Missing or width ≥ 360 = any. */
+  dirC?: number;
+  dirW?: number;
 };
+
+export type Arc = Pick<Spot, "dirC" | "dirW">;
+
+/** Is a FROM-direction inside the spot's allowed arc? (No arc, or a full circle, allows everything.) */
+export function inArc(dir: number, arc?: Arc) {
+  if (arc?.dirC == null || arc.dirW == null || arc.dirW >= 360) return true;
+  const d = Math.abs((((dir - arc.dirC) % 360) + 540) % 360 - 180); // angular distance 0..180
+  return d <= arc.dirW / 2;
+}
+
+export function arcLabel(arc?: Arc) {
+  if (arc?.dirC == null || arc.dirW == null || arc.dirW >= 360) return "Any direction";
+  return `${compass(arc.dirC)} ±${Math.round(arc.dirW / 2)}° (${compass(arc.dirC - arc.dirW / 2)}–${compass(arc.dirC + arc.dirW / 2)})`;
+}
 
 export type Model = "hrrr" | "nbm";
 export type Hour = { t: number; speed: number; gust: number; dir: number; model: Model }; // t = ms epoch, knots, deg FROM
@@ -56,6 +73,9 @@ export function nearestLive(readings: LiveReading[], lat: number, lon: number, m
   return withKm.sort((a, b) => (a.source === b.source ? a.km - b.km : a.source === "noaa" ? -1 : 1))[0] ?? null;
 }
 
+/** NOAA sends "" for a missing value, and Number("") is 0 — that would be a fake calm reading. */
+const num = (x: unknown) => (x == null || String(x).trim() === "" ? NaN : Number(x));
+
 const POINTS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
 export const compass = (deg: number) => POINTS[Math.floor((((deg % 360) + 360) % 360) / 22.5 + 0.5) % 16];
 
@@ -71,7 +91,7 @@ export function forecastUrl(lat: number, lon: number) {
     hourly: "wind_speed_10m,wind_gusts_10m,wind_direction_10m",
     // HRRR (3 km, hourly updates) runs out at 48 h; NOAA's National Blend (NBM) carries it to 7 days.
     models: "gfs_hrrr,ncep_nbm_conus", wind_speed_unit: "kn", timeformat: "unixtime",
-    timezone: "auto", forecast_days: "7",
+    timezone: "auto", forecast_days: "7", past_days: "1",
   });
   return `https://api.open-meteo.com/v1/forecast?${q}`;
 }
@@ -110,7 +130,7 @@ export function parseObservation(json: any): Observation {
   if (json.error) throw new Error(json.error.message);
   const row = json.data?.[json.data.length - 1];
   const t = row ? Date.parse(row.t.replace(" ", "T") + ":00Z") : NaN;
-  const [speed, gust, dir] = row ? [row.s, row.g, row.d].map(Number) : [NaN, NaN, NaN];
+  const [speed, gust, dir] = row ? [row.s, row.g, row.d].map(num) : [NaN, NaN, NaN];
   if (!row || [t, speed, gust, dir].some(Number.isNaN)) throw new Error("Station returned no wind reading");
   return { name: json.metadata?.name ?? "NOAA station", t, speed, gust, dir };
 }
@@ -121,12 +141,16 @@ export function parseStations(json: any): Station[] {
     .map((s: any) => ({ id: String(s.id), name: s.name, lat: s.lat, lon: s.lng }));
 }
 
-/** Runs of consecutive hours with sustained wind in [min,max] (start of first hour → start of last). */
-export function rideableWindows(hours: Hour[], min: number, max: number): Window[] {
+type Rideable = Pick<Spot, "min" | "max" | "dirC" | "dirW">;
+export const isRideable = (h: Pick<Hour, "speed" | "dir">, spot: Rideable) =>
+  h.speed >= spot.min && h.speed <= spot.max && inArc(h.dir, spot);
+
+/** Runs of consecutive hours with sustained wind in range AND from a workable direction. */
+export function rideableWindows(hours: Hour[], spot: Rideable): Window[] {
   const out: Window[] = [];
   let cur: Window | null = null;
   for (const h of hours) {
-    if (h.speed >= min && h.speed <= max) cur ? (cur.end = h.t) : (cur = { start: h.t, end: h.t });
+    if (isRideable(h, spot)) cur ? (cur.end = h.t) : (cur = { start: h.t, end: h.t });
     else if (cur) { out.push(cur); cur = null; }
   }
   if (cur) out.push(cur);
@@ -136,9 +160,10 @@ export function rideableWindows(hours: Hour[], min: number, max: number): Window
 export const nearestHour = (hours: Hour[], t: number) =>
   hours.reduce<Hour | null>((best, h) => (!best || Math.abs(h.t - t) < Math.abs(best.t - t) ? h : best), null);
 
-export type Ride = "below" | "good" | "above";
-export const rideState = (speed: number, spot: Pick<Spot, "min" | "max">): Ride =>
-  speed < spot.min ? "below" : speed > spot.max ? "above" : "good";
+export type Ride = "below" | "good" | "above" | "offdir";
+/** Speed decides below/above; a right-speed wind from the wrong direction is its own state. */
+export const rideState = (speed: number, spot: Rideable, dir?: number): Ride =>
+  speed < spot.min ? "below" : speed > spot.max ? "above" : dir != null && !inArc(dir, spot) ? "offdir" : "good";
 
 /** Great-circle distance in km. */
 export function distanceKm(aLat: number, aLon: number, bLat: number, bLon: number) {
@@ -242,4 +267,96 @@ export function fieldAt(f: WindField, t: number) {
   f.times.forEach((x, j) => { if (Math.abs(x - t) < Math.abs(f.times[i] - t)) i = j; });
   const pts = f.speed.map((s, p) => ({ speed: s[i] ?? 0, dir: f.dir[p][i] ?? 0 }));
   return { grid: buildGrid(f.lats, f.lons, pts), t: f.times[i], model: f.models[i] };
+}
+
+/* ---------- Forecast vs actual ---------- */
+
+export type Obs = { t: number; speed: number; gust: number; dir: number };
+
+/** CO-OPS wind history (range=24 etc.) → observations, skipping blank rows. */
+export function parseObsSeries(json: any): Obs[] {
+  if (json.error) throw new Error(json.error.message);
+  return (json.data ?? [])
+    .map((r: any) => ({ t: Date.parse(r.t.replace(" ", "T") + ":00Z"), speed: num(r.s), gust: num(r.g), dir: num(r.d) }))
+    .filter((o: Obs) => [o.t, o.speed, o.gust, o.dir].every(Number.isFinite));
+}
+
+export const stationHistoryUrl = (station: string, hours = 24) => {
+  const q = new URLSearchParams({ station, product: "wind", range: String(hours), units: "english", time_zone: "gmt", format: "json", application: "SeaSensei" });
+  return `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?${q}`;
+};
+
+/** Average observations into the top-of-hour buckets the forecast uses (bucket = hour containing the reading, centred). */
+export function hourlyObs(obs: Obs[]): Obs[] {
+  const by = new Map<number, Obs[]>();
+  for (const o of obs) {
+    const k = Math.round(o.t / 3600e3) * 3600e3;
+    (by.get(k) ?? by.set(k, []).get(k)!).push(o);
+  }
+  return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([t, xs]) => {
+    const mean = (f: (o: Obs) => number) => xs.reduce((a, o) => a + f(o), 0) / xs.length;
+    // vector-average the direction so 350° and 10° don't average to 180°
+    const u = mean((o) => Math.sin((o.dir * Math.PI) / 180)), v = mean((o) => Math.cos((o.dir * Math.PI) / 180));
+    return { t, speed: mean((o) => o.speed), gust: Math.max(...xs.map((o) => o.gust)), dir: (Math.atan2(u, v) * 180 / Math.PI + 360) % 360 };
+  });
+}
+
+export type Score = { n: number; bias: number; mae: number; dirErr: number };
+/** How the model did against the stations: bias = model − observed (knots), mae = average miss, dirErr = average direction miss. */
+export function scoreForecast(hours: Hour[], obs: Obs[]): Score | null {
+  const hourly = hourlyObs(obs);
+  const byT = new Map(hours.map((h) => [h.t, h]));
+  const pairs = hourly.flatMap((o) => (byT.has(o.t) ? [{ m: byT.get(o.t)!, o }] : []));
+  if (pairs.length < 3) return null;
+  const angle = (a: number, b: number) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
+  return {
+    n: pairs.length,
+    bias: pairs.reduce((a, p) => a + (p.m.speed - p.o.speed), 0) / pairs.length,
+    mae: pairs.reduce((a, p) => a + Math.abs(p.m.speed - p.o.speed), 0) / pairs.length,
+    dirErr: pairs.reduce((a, p) => a + angle(p.m.dir, p.o.dir), 0) / pairs.length,
+  };
+}
+
+/* ---------- Model comparison ---------- */
+
+export const MODELS = [
+  { key: "gfs_hrrr", label: "HRRR", color: "#22d3ee", note: "3 km, to 48 h" },
+  { key: "ncep_nbm_conus", label: "NBM", color: "#facc15", note: "NOAA blend, to 7 d" },
+  { key: "ecmwf_ifs025", label: "ECMWF", color: "#a78bfa", note: "European, to 7 d" },
+  { key: "gfs_seamless", label: "GFS", color: "#fb923c", note: "US global, to 7 d" },
+] as const;
+
+export type ModelCompare = { times: number[]; series: Record<string, (number | null)[]> };
+
+export function modelsUrl(lat: number, lon: number) {
+  const q = new URLSearchParams({
+    latitude: String(lat), longitude: String(lon), hourly: "wind_speed_10m", models: MODELS.map((m) => m.key).join(","),
+    wind_speed_unit: "kn", timeformat: "unixtime", timezone: "auto", forecast_days: "7", past_days: "1",
+  });
+  return `https://api.open-meteo.com/v1/forecast?${q}`;
+}
+
+export function parseModels(json: any): ModelCompare & { timeZone: string } {
+  const h = json.hourly;
+  return {
+    timeZone: json.timezone,
+    times: h.time.map((t: number) => t * 1000),
+    series: Object.fromEntries(MODELS.map((m) => [m.key, (h[`wind_speed_10m_${m.key}`] ?? []) as (number | null)[]])),
+  };
+}
+
+/** Across the models that have a value at hour i: min, max, and the spread between them. */
+export function spreadAt(c: ModelCompare, i: number) {
+  const vs = MODELS.map((m) => c.series[m.key]?.[i]).filter((v): v is number => v != null);
+  if (vs.length < 2) return null;
+  const min = Math.min(...vs), max = Math.max(...vs);
+  return { min, max, spread: max - min, n: vs.length };
+}
+
+/** Plain-English agreement between models over [from, to) — the average spread. */
+export function agreement(c: ModelCompare, from: number, to: number) {
+  const sp = c.times.flatMap((t, i) => (t >= from && t < to ? [spreadAt(c, i)] : [])).filter((x) => x != null) as { spread: number }[];
+  if (!sp.length) return null;
+  const avg = sp.reduce((a, x) => a + x.spread, 0) / sp.length;
+  return { avg, label: avg <= 3 ? "Models agree" : avg <= 6 ? "Some disagreement" : "Models disagree", level: avg <= 3 ? "high" : avg <= 6 ? "mid" : "low" } as const;
 }

@@ -49,14 +49,14 @@ export function Timeline({ hours, models, index, onIndex, playing, onPlaying, tz
           </span>
         </div>
         <Slider.Root className="relative flex h-5 w-full touch-none select-none items-center" min={0} max={last} step={1}
-          value={[index]} onValueChange={([v]) => { onPlaying(false); onIndex(v); }} aria-label="Forecast time">
+          value={[index]} onValueChange={([v]) => { onPlaying(false); onIndex(v); }} >
           <Slider.Track className="relative h-1.5 grow overflow-hidden rounded-full bg-white/10">
             {nbmFrom > 0 && (
               <span className="absolute inset-y-0 right-0 bg-amber-300/15" style={{ left: `${(nbmFrom / last) * 100}%` }} />
             )}
             <Slider.Range className="absolute h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400" />
           </Slider.Track>
-          <Slider.Thumb className="block h-5 w-5 rounded-full border-2 border-white bg-[#0b1220] shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-cyan-300/40" />
+          <Slider.Thumb aria-label="Forecast time" className="block h-5 w-5 rounded-full border-2 border-white bg-[#0b1220] shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-cyan-300/40" />
         </Slider.Root>
         <div className="relative mt-1 h-3 text-[9px] text-white/40">
           {midnights.map(({ h, i }) => (

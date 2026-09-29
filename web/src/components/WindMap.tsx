@@ -114,8 +114,8 @@ function SpotMarker({ spot, selected, onClick, dim, at }: { spot: Spot; selected
   const live = useSpotNow(spot);
   const future = at != null ? nearestHour(live.fc.data?.hours ?? [], at) : null;
   const now = at != null ? future : live.now;
-  const ride = now ? rideState(now.speed, spot) : null;
-  const ring = ride === "good" ? "ring-emerald-400/80" : ride === "above" ? "ring-rose-400/80" : "ring-white/20";
+  const ride = now ? rideState(now.speed, spot, now.dir) : null;
+  const ring = ride === "good" ? "ring-emerald-400/80" : ride === "above" ? "ring-rose-400/80" : ride === "offdir" ? "ring-amber-300/70" : "ring-white/20";
   return (
     <Marker longitude={spot.lon} latitude={spot.lat} anchor="bottom" onClick={(e) => { e.originalEvent.stopPropagation(); onClick(); }}
       style={{ zIndex: selected ? 10 : 1 }}>

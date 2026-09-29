@@ -65,11 +65,12 @@ const RIDE: Record<Ride, { label: string; cls: string }> = {
   good: { label: "In range", cls: "bg-emerald-400/15 text-emerald-300 ring-emerald-400/30" },
   below: { label: "Too light", cls: "bg-slate-400/10 text-slate-300 ring-slate-400/20" },
   above: { label: "Overpowered", cls: "bg-rose-400/15 text-rose-300 ring-rose-400/30" },
+  offdir: { label: "Wrong direction", cls: "bg-amber-400/15 text-amber-200 ring-amber-400/30" },
 };
 export function RideBadge({ ride, className }: { ride: Ride; className?: string }) {
   return (
     <span className={clsx("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1", RIDE[ride].cls, className)}>
-      <span className={clsx("h-1.5 w-1.5 rounded-full", ride === "good" ? "bg-emerald-400" : ride === "above" ? "bg-rose-400" : "bg-slate-400")} />
+      <span className={clsx("h-1.5 w-1.5 rounded-full", ride === "good" ? "bg-emerald-400" : ride === "above" ? "bg-rose-400" : ride === "offdir" ? "bg-amber-300" : "bg-slate-400")} />
       {RIDE[ride].label}
     </span>
   );

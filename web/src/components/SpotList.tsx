@@ -2,7 +2,7 @@ import { motion } from "motion/react";
 import { ChevronRight, Radio } from "lucide-react";
 import { useSpots } from "../lib/data";
 import { fmtWindow, useSpotNow } from "../lib/useSpotNow";
-import type { Spot } from "../lib/wind";
+import { compass, type Spot } from "../lib/wind";
 import { Knots, RideBadge, Skeleton, Sparkline, WindArrow } from "./bits";
 
 export function SpotList({ onSelect }: { onSelect: (s: Spot) => void }) {
@@ -40,7 +40,7 @@ function SpotCard({ spot, onClick }: { spot: Spot; onClick: () => void }) {
             {spot.station && <Radio className="h-3.5 w-3.5 shrink-0 text-cyan-300/70" aria-label="Live station" />}
           </div>
           <div className="mt-1 flex items-center gap-2 text-xs text-white/50">
-            <span className="num">{spot.min}–{spot.max} kn</span>
+            <span className="num">{spot.min}–{spot.max} kn{spot.dirW != null && spot.dirW < 360 && spot.dirC != null ? ` · ${compass(spot.dirC)}±${Math.round(spot.dirW / 2)}°` : ""}</span>
             {ride && <RideBadge ride={ride} className="!py-0.5 !text-[11px]" />}
           </div>
         </div>

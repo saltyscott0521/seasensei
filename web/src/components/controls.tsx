@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { Check } from "lucide-react";
 import { useObservation, useStations } from "../lib/data";
 import { ago } from "../lib/useSpotNow";
-import { compass, nearestStations } from "../lib/wind";
+import { arcLabel, compass, nearestStations } from "../lib/wind";
 import { Skeleton, WindArrow } from "./bits";
 
 export function RangeSlider({ value, onChange }: { value: [number, number]; onChange: (v: [number, number]) => void }) {
@@ -71,5 +71,52 @@ function StationRow({ id, name, km, selected, onClick }: { id: string; name: str
       </div>
       {selected && <Check className="h-4 w-4 shrink-0 text-cyan-300" />}
     </button>
+  );
+}
+
+/** Which wind directions work at this spot: a centre and a width, drawn as a wedge on a compass. */
+export function DirectionPicker({ dirC, dirW, onChange }: { dirC?: number; dirW?: number; onChange: (v: { dirC?: number; dirW?: number }) => void }) {
+  const any = dirC == null || dirW == null || dirW >= 360;
+  const c = dirC ?? 225, w = any ? 360 : dirW!;
+  const R = 44, pt = (deg: number) => [50 + R * Math.sin((deg * Math.PI) / 180), 50 - R * Math.cos((deg * Math.PI) / 180)];
+  const [x0, y0] = pt(c - w / 2), [x1, y1] = pt(c + w / 2);
+  const wedge = any ? "" : `M50 50 L${x0.toFixed(2)} ${y0.toFixed(2)} A${R} ${R} 0 ${w > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`;
+  const set = (patch: { dirC?: number; dirW?: number }) => onChange({ dirC: c, dirW: w, ...patch });
+  return (
+    <div>
+      <div className="mb-3 flex items-baseline justify-between">
+        <span className="text-xs font-medium uppercase tracking-wider text-white/45">Wind direction</span>
+        <span className="num text-sm text-white/90">{arcLabel(any ? undefined : { dirC: c, dirW: w })}</span>
+      </div>
+      <div className="flex items-center gap-4">
+        <svg viewBox="0 0 100 100" className="h-24 w-24 shrink-0" role="img" aria-label="Workable wind directions">
+          <circle cx="50" cy="50" r={R} fill="rgb(255 255 255 / .03)" stroke="rgb(255 255 255 / .12)" />
+          {any ? <circle cx="50" cy="50" r={R} fill="rgb(52 211 153 / .18)" /> : <path d={wedge} fill="rgb(52 211 153 / .3)" stroke="rgb(52 211 153 / .8)" strokeWidth="1" />}
+          {["N", "E", "S", "W"].map((l, i) => (
+            <text key={l} x="50" y="11" textAnchor="middle" fontSize="8" fontWeight="600" fill="rgb(255 255 255 / .6)" transform={`rotate(${i * 90} 50 50)`}>{l}</text>
+          ))}
+        </svg>
+        <div className="flex flex-1 flex-col gap-3">
+          <DirSlider label="Centre" min={0} max={355} step={5} value={c} disabled={any} display={compass(c)} onChange={(v) => set({ dirC: v })} />
+          <DirSlider label="Width" min={30} max={360} step={10} value={w} display={any ? "Any" : `${w}°`} onChange={(v) => set({ dirW: v })} />
+        </div>
+      </div>
+      <p className="mt-2 text-[11px] text-white/35">Wind is described by where it blows <i>from</i>. Slide Width to the right end for any direction. Hours outside this arc don't count as rideable.</p>
+    </div>
+  );
+}
+
+function DirSlider({ label, min, max, step, value, display, disabled, onChange }: {
+  label: string; min: number; max: number; step: number; value: number; display: string; disabled?: boolean; onChange: (v: number) => void;
+}) {
+  return (
+    <div className={clsx(disabled && "opacity-40")}>
+      <div className="mb-1 flex justify-between text-[11px] text-white/50"><span>{label}</span><span className="num text-white/80">{display}</span></div>
+      <Slider.Root className="relative flex h-5 w-full touch-none select-none items-center" min={min} max={max} step={step} value={[value]}
+        onValueChange={([v]) => onChange(v)} disabled={disabled}>
+        <Slider.Track className="relative h-1.5 grow rounded-full bg-white/10"><Slider.Range className="absolute h-full rounded-full bg-emerald-400/70" /></Slider.Track>
+        <Slider.Thumb aria-label={label} className="block h-5 w-5 rounded-full border-2 border-white bg-[#0b1220] shadow outline-none focus-visible:ring-4 focus-visible:ring-cyan-300/40" />
+      </Slider.Root>
+    </div>
   );
 }

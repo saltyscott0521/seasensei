@@ -19,10 +19,10 @@ export function useSpotNow(spot: Spot | undefined) {
   const now = fresh
     ? { speed: fresh.speed, gust: fresh.gust ?? fresh.speed, dir: fresh.dir, t: fresh.t, source: "live" as const, stationName: fresh.name, km: fresh.km }
     : model ? { ...model, source: "hrrr" as const, stationName: undefined, km: null } : null;
-  const windows = spot ? rideableWindows(hours.filter((h) => h.t >= Date.now() - 3600e3), spot.min, spot.max) : [];
+  const windows = spot ? rideableWindows(hours.filter((h) => h.t >= Date.now() - 3600e3), spot) : [];
   return {
     fc, ob, model, now,
-    ride: now && spot ? rideState(now.speed, spot) : null,
+    ride: now && spot ? rideState(now.speed, spot, now.dir) : null,
     next: windows[0] ?? null,
     windows,
   };
@@ -42,4 +42,19 @@ export function fmtWindow(w: { start: number; end: number }, tz: string) {
 export function ago(t: number) {
   const m = Math.max(0, Math.round((Date.now() - t) / 60_000));
   return m < 1 ? "just now" : m < 90 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
+}
+
+/**
+ * The NOAA sensor to judge a spot's forecast against: its own station, else the nearest NOAA
+ * sensor within 25 km (airports only report hourly, so they aren't used for scoring).
+ */
+export function useReferenceStation(spot: Spot | undefined) {
+  const live = useLiveStations();
+  if (!spot) return null;
+  if (spot.station) {
+    const own = live.data?.find((r) => r.id === spot.station);
+    return { id: spot.station, name: own?.name ?? `Station ${spot.station}`, km: own ? distanceKm(spot.lat, spot.lon, own.lat, own.lon) : 0 };
+  }
+  const near = nearestLive((live.data ?? []).filter((r) => r.source === "noaa"), spot.lat, spot.lon, 25);
+  return near ? { id: near.id, name: near.name, km: near.km } : null;
 }

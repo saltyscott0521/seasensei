@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
 import {
-  forecastUrl, gridPoints, IEM_URL, parseField, inBox, parseForecast, parseIem, parseObservation, parseStations, spotsBox,
+  forecastUrl, gridPoints, IEM_URL, modelsUrl, parseField, parseModels, parseObsSeries, stationHistoryUrl, inBox, parseForecast, parseIem, parseObservation, parseStations, spotsBox,
   stationUrl, STATIONS_URL, TAMPA_BAY, type Bounds, type LiveReading, type Spot,
 } from "./wind";
 
@@ -91,6 +91,26 @@ export function useLiveStations() {
     },
   });
 }
+
+/** Last 24 h of 6-minute readings from one NOAA station. */
+export const useObsHistory = (station: string | undefined) =>
+  useQuery({
+    queryKey: ["obs-history", station],
+    queryFn: () => json(stationHistoryUrl(station!, 24)).then(parseObsSeries),
+    enabled: !!station,
+    staleTime: 5 * MIN,
+    refetchInterval: 10 * MIN,
+    retry: 1,
+  });
+
+/** HRRR, NBM, ECMWF and GFS side by side for one spot (one request). */
+export const useModelCompare = (spot: Spot | undefined, enabled: boolean) =>
+  useQuery({
+    queryKey: ["models", spot?.lat, spot?.lon],
+    queryFn: () => json(modelsUrl(spot!.lat, spot!.lon)).then(parseModels),
+    enabled: !!spot && enabled,
+    staleTime: 20 * MIN,
+  });
 
 /* ---------- Spots: localStorage, same key/shape as v1 so saved spots carry over ---------- */
 

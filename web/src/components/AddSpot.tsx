@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { spotStore, useStations } from "../lib/data";
 import { nearestStations, type Spot } from "../lib/wind";
-import { RangeSlider, StationPicker } from "./controls";
+import { DirectionPicker, RangeSlider, StationPicker } from "./controls";
 
 export function AddSpot({ pin, onCancel, onSaved }: { pin: { lat: number; lon: number } | null; onCancel: () => void; onSaved: (s: Spot) => void }) {
   const [name, setName] = useState("");
   const [range, setRange] = useState<[number, number]>([15, 30]);
   const [station, setStation] = useState<string | undefined>();
+  const [dir, setDir] = useState<{ dirC?: number; dirW?: number }>({});
   const stations = useStations();
 
   // Default to the nearest station within 15 km; the picker shows whether it actually reports wind.
@@ -21,7 +22,7 @@ export function AddSpot({ pin, onCancel, onSaved }: { pin: { lat: number; lon: n
 
   function save() {
     if (!pin || !name.trim()) return;
-    const s = spotStore.add({ name: name.trim(), lat: +pin.lat.toFixed(4), lon: +pin.lon.toFixed(4), min: range[0], max: range[1], ...(station ? { station } : {}) });
+    const s = spotStore.add({ name: name.trim(), lat: +pin.lat.toFixed(4), lon: +pin.lon.toFixed(4), min: range[0], max: range[1], ...(station ? { station } : {}), ...(dir.dirW != null && dir.dirW < 360 ? dir : {}) });
     toast.success(`${s.name} added`);
     onSaved(s);
   }
@@ -47,6 +48,7 @@ export function AddSpot({ pin, onCancel, onSaved }: { pin: { lat: number; lon: n
               className="w-full rounded-xl bg-white/[.06] px-3.5 py-3 text-base outline-none ring-1 ring-white/10 placeholder:text-white/25 focus:ring-2 focus:ring-cyan-300/50" />
           </label>
           <RangeSlider value={range} onChange={setRange} />
+          <DirectionPicker dirC={dir.dirC} dirW={dir.dirW} onChange={setDir} />
           <StationPicker lat={pin.lat} lon={pin.lon} value={station} onChange={setStation} />
           <motion.button whileTap={{ scale: 0.98 }} onClick={save} disabled={!name.trim()}
             className="rounded-2xl bg-gradient-to-r from-cyan-400 to-emerald-400 py-3.5 text-[15px] font-semibold text-slate-950 shadow-lg shadow-cyan-500/20 transition disabled:opacity-40">

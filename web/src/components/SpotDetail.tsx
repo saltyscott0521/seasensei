@@ -2,22 +2,27 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, Radio, Settings2, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { spotStore } from "../lib/data";
-import { ago, fmtWindow, useSpotNow } from "../lib/useSpotNow";
-import { compass, nearestHour, rideState, windColor, type Hour, type Spot } from "../lib/wind";
+import { spotStore, useModelCompare, useObsHistory } from "../lib/data";
+import { ago, fmtWindow, useReferenceStation, useSpotNow } from "../lib/useSpotNow";
+import { arcLabel, compass, isRideable, nearestHour, rideState, scoreForecast, windColor, type Hour, type Spot } from "../lib/wind";
 import { Dial, Knots, RideBadge, Skeleton, WindArrow } from "./bits";
-import { RangeSlider, StationPicker } from "./controls";
-import { ForecastChart } from "./ForecastChart";
+import { DirectionPicker, RangeSlider, StationPicker } from "./controls";
+import { ForecastChart, windowFor, type Range } from "./ForecastChart";
+import { ModelChart } from "./ModelChart";
 
 export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void }) {
   const { fc, ob, model, now, windows } = useSpotNow(spot);
   const [scrub, setScrub] = useState<Hour | null>(null);
   const [editing, setEditing] = useState(false);
-  const [range, setRange] = useState<"48h" | "7d">("48h");
+  const [range, setRange] = useState<Range>("48h");
+  const [view, setView] = useState<"forecast" | "models">("forecast");
+  const ref = useReferenceStation(spot);
+  const history = useObsHistory(ref?.id);
+  const models = useModelCompare(spot, view === "models");
   const nbmStart = fc.data?.hours.find((h) => h.model === "nbm")?.t ?? Infinity;
   const tz = fc.data?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const shown = scrub ?? now;
-  const ride = shown ? rideState(shown.speed, spot) : null;
+  const ride = shown ? rideState(shown.speed, spot, shown.dir) : null;
   const when = scrub
     ? new Intl.DateTimeFormat([], { timeZone: tz, weekday: "short", hour: "numeric" }).format(scrub.t) + (scrub.model === "nbm" ? " · NBM" : " · HRRR")
     : now?.source === "live" ? `Live · ${now.stationName}${now.km != null ? ` (${now.km < 10 ? now.km.toFixed(1) : Math.round(now.km)} km)` : ""} · ${ago(now.t)}` : "Now · HRRR model";
@@ -30,7 +35,7 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
         </button>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-xl font-semibold tracking-tight">{spot.name}</h2>
-          <p className="num text-xs text-white/40">{spot.lat.toFixed(3)}, {spot.lon.toFixed(3)} · {spot.min}–{spot.max} kn</p>
+          <p className="num text-xs text-white/40">{spot.lat.toFixed(3)}, {spot.lon.toFixed(3)} · {spot.min}–{spot.max} kn · {arcLabel(spot)}</p>
         </div>
         <button onClick={() => setEditing((e) => !e)} aria-label="Spot settings" aria-pressed={editing}
           className={`grid h-10 w-10 place-items-center rounded-full transition ${editing ? "bg-white/15 text-white" : "text-white/60 hover:bg-white/10"}`}>
@@ -95,21 +100,14 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
       {/* Chart */}
       <div className="rounded-3xl border border-white/[.07] bg-white/[.025] p-3">
         <div className="mb-1 flex items-center justify-between px-1">
-          <div className="relative flex rounded-full bg-white/[.06] p-0.5 text-[11px] font-medium">
-            {(["48h", "7d"] as const).map((r) => (
-              <button key={r} onClick={() => setRange(r)} aria-pressed={range === r} className="relative rounded-full px-2.5 py-1">
-                {range === r && <motion.span layoutId="range-pill" className="absolute inset-0 rounded-full bg-white/15" transition={{ type: "spring", stiffness: 500, damping: 36 }} />}
-                <span className={`relative ${range === r ? "text-white" : "text-white/50"}`}>{r === "48h" ? "48 h" : "7 days"}</span>
-              </button>
-            ))}
-          </div>
-          <span className="flex items-center gap-3 text-[10px] text-white/40">
-            <span className="flex items-center gap-1"><i className="h-0.5 w-3 rounded bg-gradient-to-r from-cyan-400 to-lime-300" />wind</span>
-            <span className="flex items-center gap-1"><i className="w-3 border-t border-dashed border-white/50" />gust</span>
-            <span className="flex items-center gap-1"><i className="h-2 w-3 rounded-sm bg-emerald-400/20" />your range</span>
-          </span>
+          <Segmented value={view} onChange={setView} id="view-pill" options={[["forecast", "Forecast"], ["models", "Models"]]} />
+          <Segmented value={range} onChange={setRange} id="range-pill" options={[["24h", "Past 24 h"], ["48h", "48 h"], ["7d", "7 days"]]} />
         </div>
-        {fc.data ? <ForecastChart forecast={fc.data} spot={spot} onScrub={setScrub} range={range} /> : <Skeleton className="h-44" />}
+        {view === "forecast"
+          ? (fc.data ? <ForecastChart forecast={fc.data} spot={spot} onScrub={setScrub} range={range} obs={history.data} /> : <Skeleton className="h-44" />)
+          : models.data ? <ModelChart data={models.data} spot={spot} range={range} tz={tz} />
+            : models.isError ? <p className="p-4 text-sm text-rose-300">Couldn't load the model comparison.</p> : <Skeleton className="h-64" />}
+        {view === "forecast" && <Accuracy hours={fc.data ? windowFor(fc.data.hours, "24h") : []} obs={history.data} loading={history.isPending && !!ref} refName={ref?.name} km={ref?.km} />}
         <p className="px-1 pt-1 text-[10px] text-white/30">Drag to scrub · HRRR to 48 h, then NOAA NBM · via Open-Meteo</p>
       </div>
 
@@ -137,7 +135,7 @@ function HourStrip({ hours, tz, spot }: { hours: Hour[]; tz: string; spot: Spot 
   return (
     <div ref={ref} className="no-scrollbar -mx-1 flex snap-x gap-1.5 overflow-x-auto px-1 pb-1">
       {hours.map((h) => {
-        const good = h.speed >= spot.min && h.speed <= spot.max;
+        const good = isRideable(h, spot);
         const isNow = h === nowH;
         const label = hf.format(h.t);
         const midnight = /^12\s?AM$/i.test(label) || label === "0";
@@ -160,6 +158,7 @@ function SpotSettings({ spot, onDeleted }: { spot: Spot; onDeleted: () => void }
   return (
     <div className="flex flex-col gap-5 rounded-3xl border border-white/[.07] bg-white/[.03] p-4">
       <RangeSlider value={[spot.min, spot.max]} onChange={([min, max]) => spotStore.update(spot.id, { min, max })} />
+      <DirectionPicker dirC={spot.dirC} dirW={spot.dirW} onChange={(v) => spotStore.update(spot.id, v)} />
       <StationPicker lat={spot.lat} lon={spot.lon} value={spot.station} onChange={(station) => spotStore.update(spot.id, { station })} />
       <button
         onClick={() => {
@@ -169,6 +168,39 @@ function SpotSettings({ spot, onDeleted }: { spot: Spot; onDeleted: () => void }
         className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-medium transition ${armed ? "bg-rose-500 text-white" : "text-rose-300 ring-1 ring-rose-400/25 hover:bg-rose-400/10"}`}>
         <Trash2 className="h-4 w-4" />{armed ? "Tap again to delete" : "Delete spot"}
       </button>
+    </div>
+  );
+}
+
+function Segmented<T extends string>({ value, onChange, options, id }: { value: T; onChange: (v: T) => void; options: [T, string][]; id: string }) {
+  return (
+    <div className="relative flex rounded-full bg-white/[.06] p-0.5 text-[11px] font-medium">
+      {options.map(([k, label]) => (
+        <button key={k} onClick={() => onChange(k)} aria-pressed={value === k} className="relative rounded-full px-2.5 py-1">
+          {value === k && <motion.span layoutId={id} className="absolute inset-0 rounded-full bg-white/15" transition={{ type: "spring", stiffness: 500, damping: 36 }} />}
+          <span className={`relative whitespace-nowrap ${value === k ? "text-white" : "text-white/50"}`}>{label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** "How did the model do over the last day?" — bias and average miss against the nearest NOAA sensor. */
+function Accuracy({ hours, obs, loading, refName, km }: { hours: Hour[]; obs?: import("../lib/wind").Obs[]; loading: boolean; refName?: string; km?: number }) {
+  if (!refName) return <p className="px-1 pt-2 text-[11px] text-white/35">No NOAA sensor within 25 km, so there's nothing to check the forecast against here.</p>;
+  if (loading) return <Skeleton className="mt-2 h-10" />;
+  const sc = obs ? scoreForecast(hours, obs) : null;
+  if (!sc) return <p className="px-1 pt-2 text-[11px] text-white/35">Not enough recent readings from {refName} to score the forecast.</p>;
+  const b = sc.bias, tone = Math.abs(b) < 1 ? "text-emerald-300" : Math.abs(b) < 3 ? "text-amber-200" : "text-rose-300";
+  return (
+    <div className="mt-2 flex items-center gap-3 rounded-2xl bg-white/[.04] px-3 py-2.5">
+      <div className="min-w-0 flex-1">
+        <div className={`text-sm font-semibold ${tone}`}>
+          {Math.abs(b) < 1 ? "Forecast has been on the money" : `Model ran ${Math.abs(b).toFixed(1)} kn ${b < 0 ? "low" : "high"}`}
+        </div>
+        <div className="num text-[11px] text-white/45">avg miss {sc.mae.toFixed(1)} kn · direction {Math.round(sc.dirErr)}° off · {sc.n} h vs {refName}{km != null ? ` (${km < 10 ? km.toFixed(1) : Math.round(km)} km)` : ""}</div>
+      </div>
+      <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/70">last 24 h</span>
     </div>
   );
 }
