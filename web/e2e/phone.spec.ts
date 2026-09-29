@@ -13,7 +13,10 @@ test("phone: bottom sheet, spot detail, timeline; nothing scrolls sideways", asy
   expect(card.y).toBeGreaterThan(0);
   expect(card.y + card.height).toBeLessThanOrEqual(sheet.y);
 
-  await page.getByRole("heading", { name: "Fort De Soto" }).click(); // the peek snap shows the first card; the rest need a drag up
+  // the sheet's peek now leads with the outlook; open a spot from its map marker, as you would on a phone
+  await expect(page.getByRole("region", { name: "Forecaster's outlook" })).toBeVisible();
+  // (the marker sits outside the sheet, which aria-hides it — see CLAUDE.md — so find it by class, not role)
+  await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click();
   await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
   // the chart is a usable size on a phone, with the bar chart beneath it
   const line = page.locator('svg[aria-label="48 hour wind forecast"]');

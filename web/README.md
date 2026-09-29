@@ -1,6 +1,7 @@
 # SeaSensei web (v2)
 
-Vite + React 19 + TypeScript. Live wind map and HRRR forecasts for kite spots. No backend, no API keys.
+Vite + React 19 + TypeScript, served by a small Node server (`server/`) that also hosts the AI outlook.
+All weather data is key-free; only the outlook needs an Anthropic API key (server-side).
 
 - **Map:** MapLibre (OpenFreeMap dark style) with an animated HRRR wind-particle layer (`WindParticles.tsx`) fed by a
   multi-point Open-Meteo request covering the visible area.
@@ -26,4 +27,5 @@ npm test        # vitest: src/lib/wind.test.ts
 npm run build
 ```
 
-Deploy: Coolify app (project "SeaSensei") builds `web/Dockerfile` (node build → nginx), port 80, on push to `main`.
+Deploy: Coolify app (project "SeaSensei") builds `web/Dockerfile` (node build → node server), port 80, on push to `main`.
+Env: `ANTHROPIC_API_KEY` (enables the outlook), optional `OUTLOOK_DAILY_CAP`, `OUTLOOK_PER_IP_CAP`.

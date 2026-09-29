@@ -1,0 +1,12 @@
+{
+  "name": "seasensei-server",
+  "private": true,
+  "type": "module",
+  "description": "Serves the built app and the LLM outlook endpoint. Kept separate from the app's package.json so the runtime image installs only this.",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0"
+  }
+}

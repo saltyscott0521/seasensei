@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { Outlook } from "./outlook";
 import { useSyncExternalStore } from "react";
 import {
   forecastUrl, gridPoints, IEM_URL, modelsUrl, parseField, parseModels, parseObsSeries, stationHistoryUrl, inBox, parseForecast, parseIem, parseObservation, parseStations, spotsBox,
@@ -111,6 +112,29 @@ export const useModelCompare = (spot: Spot | undefined, enabled: boolean) =>
     enabled: !!spot && enabled,
     staleTime: 20 * MIN,
   });
+
+/**
+ * The LLM outlook for the given spots (server-side: it fetches the models itself and calls Claude).
+ * Cached on the server per 3-hour model cycle, so this is cheap to ask for.
+ */
+export class OutlookError extends Error {
+  constructor(public code: string, message: string) { super(message); }
+}
+export const useOutlook = (spots: Spot[]) => {
+  const body = spots.map(({ name, lat, lon, min, max, dirC, dirW }) => ({ name, lat, lon, min, max, dirC, dirW }));
+  return useQuery<Outlook, OutlookError>({
+    queryKey: ["outlook", JSON.stringify(body)],
+    enabled: spots.length > 0,
+    staleTime: 60 * MIN,
+    retry: (n, e) => n < 1 && !["not_configured", "limit", "bad_request"].includes(e.code),
+    queryFn: async () => {
+      const r = await fetch("/api/outlook", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ spots: body.slice(0, 6) }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new OutlookError(j.error ?? "failed", j.message ?? `HTTP ${r.status}`);
+      return j as Outlook;
+    },
+  });
+};
 
 /* ---------- Spots: localStorage, same key/shape as v1 so saved spots carry over ---------- */
 

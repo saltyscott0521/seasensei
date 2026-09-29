@@ -30,7 +30,7 @@ function locationPayload(url: URL, lat: number, lon: number, i: number) {
   const add = (variable: string, fn: (t: number, model: string) => number) => {
     for (const m of models) out[`${variable}_${m}`] = times.map((t) => (m === "gfs_hrrr" && t > cut ? null : +(fn(t, m) + (i % 3) * 0.2).toFixed(1)));
   };
-  const bias: Record<string, number> = { gfs_hrrr: 0, ncep_nbm_conus: -1, ecmwf_ifs025: -3, gfs_seamless: 1 };
+  const bias: Record<string, number> = { gfs_hrrr: 0, ncep_nbm_conus: -1, ecmwf_ifs025: -3, gfs_global: 1 };
   if (hourly.includes("wind_speed_10m")) add("wind_speed_10m", (t, m) => speedAt(t) + (bias[m] ?? 0));
   if (hourly.includes("wind_gusts_10m")) add("wind_gusts_10m", (t, m) => speedAt(t) + 4 + (bias[m] ?? 0));
   if (hourly.includes("wind_direction_10m")) add("wind_direction_10m", () => dirAt());
@@ -54,6 +54,9 @@ export async function mockApis(page: Page) {
     const all = lats.map((la, i) => locationPayload(url, +la, +lons[i], i));
     return json(route, all.length === 1 ? all[0] : all);
   });
+
+  // The LLM outlook (our own server endpoint). Tests that need other states override this route.
+  await page.route("**/api/outlook", (route) => json(route, outlookFixture()));
 
   await page.route("https://api.tidesandcurrents.noaa.gov/mdapi/**", (r) => json(r, { count: STATIONS.length, stations: STATIONS }));
   await page.route("https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?**", (route) => {
@@ -82,4 +85,21 @@ export async function mockApis(page: Page) {
       ? route.fulfill({ contentType: "application/x-protobuf", headers: { "access-control-allow-origin": "*" }, body: fs.readFileSync(file) })
       : route.fulfill({ status: 404, headers: { "access-control-allow-origin": "*" }, body: "" });
   });
+}
+
+export function outlookFixture() {
+  const d = (i: number) => new Date(Date.now() + i * 864e5).toISOString().slice(0, 10);
+  const verdicts = ["maybe", "go", "go", "no", "maybe"] as const;
+  return {
+    headline: "Sea breeze fills in most afternoons; Wednesday and Thursday look best.",
+    bestBet: { date: d(2), spot: "Skyway", window: "1–6 PM", why: "all four models agree on 18–22 kn SW" },
+    days: verdicts.map((v, i) => ({
+      date: d(i), summary: `Day ${i} summary.`, rating: v, confidence: i < 2 ? "high" : i < 4 ? "medium" : "low",
+      spots: [
+        { name: "Skyway", verdict: v, window: v === "no" ? "" : "1–6 PM", wind: "18–22 kn SW", note: "sea breeze" },
+        { name: "Picnic Island", verdict: v === "go" ? "maybe" : "no", window: "", wind: "12–15 kn SW", note: "a touch light" },
+      ],
+    })),
+    timeZone: "America/New_York", generatedAt: new Date().toISOString(), model: "claude-opus-5-5",
+  };
 }

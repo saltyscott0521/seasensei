@@ -350,7 +350,7 @@ export const MODELS = [
   { key: "gfs_hrrr", label: "HRRR", color: "#22d3ee", note: "3 km, to 48 h" },
   { key: "ncep_nbm_conus", label: "NBM", color: "#facc15", note: "NOAA blend, to 7 d" },
   { key: "ecmwf_ifs025", label: "ECMWF", color: "#a78bfa", note: "European, to 7 d" },
-  { key: "gfs_seamless", label: "GFS", color: "#fb923c", note: "US global, to 7 d" },
+  { key: "gfs_global", label: "GFS", color: "#fb923c", note: "US global, to 7 d" },
 ] as const;
 
 export type ModelCompare = { times: number[]; series: Record<string, (number | null)[]> };

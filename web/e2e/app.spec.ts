@@ -92,9 +92,10 @@ test("wind direction: a spot only counts hours from a workable direction", async
   await expect.poll(async () => (await storedSpot(page, "Fort De Soto")).dirC).toBe(45);
   await expect(page.getByText("No rideable window this week.")).toBeVisible();
 
-  await press("Centre", "End");             // 355° … back through to SW
-  await press("Centre", "Home");
-  await press("Centre", "ArrowRight", 45);  // 225°
+  await press("Centre", "Home");            // back to SW: 225° = 45 steps of 5°
+  await press("Centre", "PageUp", 4);       // PageUp moves 10 steps → 200°
+  await press("Centre", "ArrowRight", 5);   // 225°
+  await expect.poll(async () => (await storedSpot(page, "Fort De Soto")).dirC).toBe(225);
   await expect(chips.first()).toBeVisible();
 });
 
@@ -168,4 +169,28 @@ test("the timeline scrubs the week: header, markers and station layer follow the
   await page.getByRole("button", { name: "Back to now" }).click();
   await expect(page.getByText("Live wind · HRRR field")).toBeVisible();
   await expect(page.getByLabel(/Old Port Tampa: \d+ knots/)).toBeVisible();
+});
+
+test("the forecaster's outlook: headline, best bet, and each day's verdict per spot", async ({ page }) => {
+  const card = page.getByRole("region", { name: "Forecaster's outlook" });
+  await expect(card.getByTestId("outlook-headline")).toHaveText(/Wednesday and Thursday look best/);
+  await expect(card.getByText(/Best bet: .* · Skyway · 1–6 PM/)).toBeVisible();
+  const days = card.getByRole("tab");
+  await expect(days).toHaveCount(5);
+  await expect(days.nth(2)).toHaveAttribute("aria-selected", "true"); // opens on the best-bet day
+  await days.nth(3).click();
+  const detail = card.getByTestId("outlook-day");
+  await expect(detail).toContainText("Day 3 summary.");
+  await expect(detail.getByText("Skyway")).toBeVisible();
+  await expect(detail.getByText("No", { exact: true }).first()).toBeVisible();
+  await expect(card.getByText(/Written by AI from forecast models/)).toBeVisible();
+});
+
+test("the outlook says so plainly when it isn't available", async ({ page }) => {
+  await page.route("**/api/outlook", (route) => route.fulfill({ status: 503, contentType: "application/json",
+    body: JSON.stringify({ error: "not_configured", message: "The AI outlook isn't set up on this server yet." }) }));
+  await page.reload();
+  const card = page.getByRole("region", { name: "Forecaster's outlook" });
+  await expect(card.getByTestId("outlook-error")).toHaveText("The AI outlook isn't set up on this server yet.");
+  await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible(); // the rest of the app is unaffected
 });
