@@ -230,18 +230,45 @@ export function sample(g: WindGrid, lat: number, lon: number) {
   return { u, v, speed: Math.hypot(u, v) };
 }
 
-/** Knots → color on a kite-rider's scale: calm blue → sweet-spot green → nuking magenta. */
+/**
+ * Wind speed → colour, a smooth gradient anchored to the ranges riders think in:
+ * green holds through ~15–20 kn, orange ~20–30, red ~30–40. Each colour is flat across the core of its
+ * range and blends into its neighbour near the edges, so a colour still means roughly the same range.
+ */
 const STOPS: [number, [number, number, number]][] = [
-  [0, [70, 90, 140]], [8, [56, 140, 220]], [13, [34, 211, 238]], [17, [52, 211, 153]],
-  [22, [163, 230, 53]], [27, [250, 204, 21]], [32, [251, 113, 36]], [40, [236, 72, 153]],
+  [0, [100, 116, 139]],  // calm: slate
+  [6, [59, 130, 246]],   // blue
+  [11, [34, 211, 238]], [13, [34, 211, 238]], // cyan
+  [16, [34, 197, 94]], [19, [34, 197, 94]],   // 15–20: green
+  [22, [249, 115, 22]], [28, [249, 115, 22]], // 20–30: orange
+  [32, [239, 68, 68]], [38, [239, 68, 68]],   // 30–40: red
+  [42, [192, 38, 211]],                       // 40+: purple
 ];
-export function windColor(kn: number, alpha = 1) {
+
+const rgbAt = (kn: number): [number, number, number] => {
+  if (kn <= STOPS[0][0]) return STOPS[0][1];
+  if (kn >= STOPS[STOPS.length - 1][0]) return STOPS[STOPS.length - 1][1];
   let i = 0;
-  while (i < STOPS.length - 2 && kn > STOPS[i + 1][0]) i++;
+  while (kn > STOPS[i + 1][0]) i++;
   const [k0, c0] = STOPS[i], [k1, c1] = STOPS[i + 1];
-  const t = Math.min(Math.max((kn - k0) / (k1 - k0), 0), 1);
-  const c = c0.map((x, j) => Math.round(x + (c1[j] - x) * t));
+  const t = (kn - k0) / (k1 - k0);
+  return [0, 1, 2].map((j) => Math.round(c0[j] + (c1[j] - c0[j]) * t)) as [number, number, number];
+};
+
+export function windColor(kn: number, alpha = 1) {
+  const c = rgbAt(kn);
   return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+}
+
+const SCALE_MAX = 45;
+/** CSS gradient of the scale (0–45 kn) for legends and slider tracks. */
+export const windGradient = (dir = "90deg") =>
+  `linear-gradient(${dir},${STOPS.map(([k, c]) => `rgb(${c.join(",")}) ${(k / SCALE_MAX) * 100}%`).join(",")})`;
+
+/** SVG gradient stops for a chart whose y-axis runs 0..top knots (offset 0 = bottom). */
+export function windStops(top: number) {
+  const inside = STOPS.filter(([k]) => k < top).map(([k, c]) => ({ offset: k / top, color: `rgb(${c.join(",")})` }));
+  return [...inside, { offset: 1, color: `rgb(${rgbAt(top).join(",")})` }];
 }
 
 /* ---------- A week of wind fields for the map's time scrubber ---------- */

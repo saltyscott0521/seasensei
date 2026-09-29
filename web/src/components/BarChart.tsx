@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { useMemo, useRef } from "react";
-import { compass, inArc, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
+import { windGradient, compass, inArc, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
 import { L, R, T, windowFor, type Range } from "./ForecastChart";
 import { useChartSize } from "./useChartSize";
 
@@ -140,7 +140,7 @@ export function BarChart({ forecast, spot, range, obs, scrubT, onScrub }: {
 
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[10px] text-white/45">
         <span className="flex items-center gap-1.5">
-          <i className="h-2 w-16 rounded-full" style={{ background: "linear-gradient(90deg,#465a8c,#388cdc,#22d3ee,#34d399,#a3e635,#facc15,#fb7124,#ec4899)" }} />bar = wind speed
+          <i className="h-2 w-16 rounded-full" style={{ background: windGradient() }} />bar = wind speed
         </span>
         <span className="flex items-center gap-1"><i className="h-2 w-2 rounded-sm bg-white/25" />faded cap = gusts</span>
         {(["good", "offdir", "below", "above"] as const).map((k) => (

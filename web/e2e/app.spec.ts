@@ -39,6 +39,10 @@ test("a spot's detail: live vs model, 7 days with NBM, forecast vs actual, model
   expect((await line.boundingBox())!.height).toBeGreaterThan(240);
   expect((await bars.boundingBox())!.height).toBeGreaterThan(140);
   await expect.poll(async () => new Set(await bars.locator("rect[fill^='rgba(']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")))).size).toBeGreaterThan(6);
+  // the scale follows the rider's ranges: 15–20 kn green, 20–30 kn orange (mock wind swings 8–24 kn)
+  const fills = () => bars.locator("rect[fill^='rgba(']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")));
+  await expect.poll(async () => (await fills()).includes("rgba(34,197,94,1)")).toBe(true);
+  await expect.poll(async () => (await fills()).includes("rgba(249,115,22,1)")).toBe(true);
   await expect.poll(async () => new Set(await bars.locator("rect[height='7']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")))).size).toBeGreaterThan(1);
   // scrubbing one chart moves the cursor and readout on the other
   await bars.scrollIntoViewIfNeeded();

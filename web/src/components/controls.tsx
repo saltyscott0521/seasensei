@@ -6,7 +6,7 @@ import { ago } from "../lib/useSpotNow";
 import { useState } from "react";
 import { Loader2, Waves } from "lucide-react";
 import { analyzeCoast, type CoastResult } from "../lib/coast";
-import { arcLabel, compass, nearestStations } from "../lib/wind";
+import { arcLabel, windGradient, compass, nearestStations } from "../lib/wind";
 import { Skeleton, WindArrow } from "./bits";
 
 export function RangeSlider({ value, onChange }: { value: [number, number]; onChange: (v: [number, number]) => void }) {
@@ -19,7 +19,7 @@ export function RangeSlider({ value, onChange }: { value: [number, number]; onCh
       <Slider.Root className="relative flex h-6 w-full touch-none select-none items-center" min={5} max={45} step={1}
         minStepsBetweenThumbs={2} value={value} onValueChange={(v) => onChange([v[0], v[1]])}>
         <Slider.Track className="relative h-1.5 grow overflow-hidden rounded-full"
-          style={{ background: "linear-gradient(90deg,#3c5a8c,#388cdc 20%,#22d3ee 32%,#34d399 45%,#a3e635 57%,#facc15 70%,#fb7124 82%,#ec4899)" }}>
+          style={{ background: windGradient() }}>
           <Slider.Range className="absolute h-full rounded-full ring-2 ring-white/70" />
         </Slider.Track>
         {[0, 1].map((i) => (

@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useMemo, useRef } from "react";
 import { useChartSize } from "./useChartSize";
-import { rideableWindows, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
+import { windStops, rideableWindows, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
 
 export type Range = "24h" | "48h" | "7d";
 export const L = 32, R = 10, T = 14, B = 30;
@@ -76,9 +76,7 @@ export function ForecastChart({ forecast, spot, onScrub, range, obs, scrubT, max
       onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={onLeave} onPointerUp={(e) => e.pointerType !== "mouse" && onLeave()}>
       <defs>
         <linearGradient id={gradId} x1="0" y1={m.y(0)} x2="0" y2={m.y(m.top)} gradientUnits="userSpaceOnUse">
-          {[0, 8, 13, 17, 22, 27, 32, 40].filter((k) => k <= m.top).map((k) => (
-            <stop key={k} offset={k / m.top} stopColor={windColor(k)} />
-          ))}
+          {windStops(m.top).map((st, i) => <stop key={i} offset={st.offset} stopColor={st.color} />)}
         </linearGradient>
         <linearGradient id={`${gradId}-fade`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="white" stopOpacity=".55" />

@@ -9,7 +9,7 @@ import { SpotList } from "./components/SpotList";
 import { WindMap } from "./components/WindMap";
 import { useSpots, useWindField } from "./lib/data";
 import { Timeline } from "./components/Timeline";
-import { fieldAt, type Bounds, type Spot } from "./lib/wind";
+import { windGradient, fieldAt, type Bounds, type Spot } from "./lib/wind";
 
 type View = { kind: "list" } | { kind: "spot"; id: string } | { kind: "add" };
 
@@ -164,8 +164,8 @@ function Legend({ desktop }: { desktop: boolean }) {
     <div className={`glass pointer-events-none absolute rounded-xl px-2.5 py-2 ${desktop ? "right-[84px] top-[18px]" : "left-3 top-[84px]"}`}
       style={desktop ? undefined : { marginTop: "env(safe-area-inset-top)" }}>
       <div className="h-1.5 w-32 rounded-full"
-        style={{ background: "linear-gradient(90deg,#465a8c,#388cdc 20%,#22d3ee 32%,#34d399 42%,#a3e635 55%,#facc15 67%,#fb7124 80%,#ec4899)" }} />
-      <div className="num mt-1 flex w-32 justify-between text-[9px] text-white/50"><span>0</span><span>10</span><span>20</span><span>30</span><span>40 kn</span></div>
+        style={{ background: windGradient() }} />
+      <div className="num relative mt-1 h-3 w-32 text-[9px] text-white/50">{[0, 10, 20, 30, 40].map((v) => <span key={v} className="absolute -translate-x-1/2" style={{ left: `${(v / 45) * 100}%` }}>{v === 40 ? "40+" : v}</span>)}</div>
     </div>
   );
 }
