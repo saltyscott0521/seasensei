@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { Drawer } from "vaul";
 import { Toaster } from "sonner";
 import { AddSpot } from "./components/AddSpot";
+import { DiscussionDialog } from "./components/Discussion";
 import { SpotDetail } from "./components/SpotDetail";
 import { SpotList } from "./components/SpotList";
 import { WindMap } from "./components/WindMap";
@@ -25,6 +26,16 @@ export default function App() {
   const [pin, setPin] = useState<{ lat: number; lon: number } | null>(null);
   const [bounds, setBounds] = useState<Bounds | null>(null);
   const [snap, setSnap] = useState<number | string | null>(SNAPS[0]);
+  // The wind discussion dialog; `?discussion=YYYY-MM-DD` is its permalink (the RSS feed links to it).
+  const [discussion, setDiscussion] = useState<string | null>(() => {
+    const d = new URLSearchParams(location.search).get("discussion");
+    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+  });
+  useEffect(() => {
+    const url = new URL(location.href);
+    if (discussion) url.searchParams.set("discussion", discussion); else url.searchParams.delete("discussion");
+    if (url.href !== location.href) history.replaceState(null, "", url);
+  }, [discussion]);
   const field = useWindField(bounds);
   const [showStations, setShowStations] = useState(true);
   const [tIndex, setTIndex] = useState(0);
@@ -73,7 +84,7 @@ export default function App() {
       <motion.div key={view.kind === "spot" ? view.id : view.kind}
         initial={{ opacity: 0, x: view.kind === "list" ? -24 : 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: view.kind === "list" ? 24 : -24 }}
         transition={{ type: "spring", stiffness: 380, damping: 34 }}>
-        {view.kind === "list" && <SpotList onSelect={select} />}
+        {view.kind === "list" && <SpotList onSelect={select} onOpenDiscussion={setDiscussion} />}
         {view.kind === "spot" && spot && <SpotDetail spot={spot} onBack={back} />}
         {view.kind === "add" && <AddSpot pin={pin} onCancel={back} onSaved={select} />}
       </motion.div>
@@ -156,6 +167,8 @@ export default function App() {
           </Drawer.Portal>
         </Drawer.Root>
       )}
+
+      <DiscussionDialog date={discussion} onDate={setDiscussion} onClose={() => setDiscussion(null)} />
 
       <Toaster theme="dark" position={desktop ? "bottom-right" : "top-center"} toastOptions={{ className: "!bg-slate-900/90 !backdrop-blur !border-white/10" }} />
     </div>

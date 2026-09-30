@@ -1,13 +1,13 @@
 # SeaSensei
 
 Live wind map and forecasts for kite spots. `web/` is the app (Vite + React 19 + TypeScript) plus a small Node
-server (`web/server/`) that serves it and the LLM outlook endpoint;
+server (`web/server/`) that serves it and writes the daily wind discussion;
 `ios/` is an older native SwiftUI version that isn't deployed. Live at https://seasensei.com.
 
 ## Working here
 - Push straight to `main` (no PRs). Coolify redeploys automatically in about 70 seconds.
 - `cd web && npm run dev` · `npm run build` · `npm test` (unit) · `npm run test:e2e` (Playwright).
-- Outlook locally: `cd web/server && npm ci && ANTHROPIC_API_KEY=… PORT=8787 node server.mjs` (Vite proxies `/api` to it).
+- Discussion locally: `cd web/server && npm ci && ANTHROPIC_API_KEY=… PORT=8787 node server.mjs` (Vite proxies `/api` to it). `node generate.mjs --dry` writes one without saving.
 - Deploy notes and infra: `~/Documents/Claude/docs/infrastructure.md` (Hetzner box, Coolify, Cloudflare tunnel).
 
 ## Testing: end to end first
@@ -21,13 +21,17 @@ Add a unit test only when a bug like that bites; otherwise extend an e2e flow.
 `.claude/skills/` holds Matt Pocock's skills (MIT, see its README): grilling, tdd, diagnosing-bugs, prototype,
 domain-modeling and others. For tdd here, the seam is the browser: test through the UI.
 
-## The AI outlook (`POST /api/outlook`)
-`web/server/outlook.mjs`: the server fetches HRRR, NBM, ECMWF and GFS for the posted spots itself (never trusts
-forecast numbers from the browser), then asks Claude (`claude-opus-5-5`, medium effort, JSON-schema output,
-`fallbacks: "default"`) for a 5-day outlook. Needs `ANTHROPIC_API_KEY` in the Coolify env; without it the endpoint
-returns 503 `not_configured` and the card says so. Spend guards: cached per spot set per 3-hour model cycle,
-concurrent identical requests share one call, `OUTLOOK_DAILY_CAP` (default 40) and `OUTLOOK_PER_IP_CAP` (default 8)
-count fresh generations only. Roughly 1.5–3k input tokens per request.
+## The daily wind discussion
+Once a day (6 AM ET, `server/publish.mjs`) `server/sources.mjs` fetches NWS products (TBW AFD and CWF, WPC PMDSPD and PMDEPD,
+NHC TWO, alerts) and an ECMWF pressure/flow check; `server/discussion.mjs` asks `claude-sonnet-5-5` (JSON-schema output,
+`fallbacks: "default"`) for an editorial on the regional *drivers*, not the numeric forecast. Guards: a regex check rejects
+drafts quoting wind speeds or pressures (one retry), citations must name real source ids (drivers with none are dropped),
+and the server attaches the source list. Stored as JSON files in `DATA_DIR` (`/data` in the image; needs a Coolify
+persistent storage, or the archive resets on redeploy). API: `/api/discussion[?date=]`, `/api/discussions`, `/feed.xml`,
+`POST /api/discussion/generate` (needs `DISCUSSION_ADMIN_TOKEN`; `?force=1` replaces today's). Needs `ANTHROPIC_API_KEY`
+in the Coolify env; without it the card says it isn't switched on. About 7k tokens in, a few thousand out, once a day.
+`e2e/server.spec.ts` runs the real server against stand-in NWS/Open-Meteo/Anthropic upstreams.
+The NWS API: AFD/CWF are per office, but WPC's PMD type mixes ~dozens of products, so match on the AWIPS id line.
 
 ## Things that will bite
 - MapLibre 6 finds its worker via `import.meta.url`, which breaks once bundled. `scripts/copy-maplibre-worker.mjs`

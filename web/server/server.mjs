@@ -1,19 +1,19 @@
-// SeaSensei's server: the built app (dist/) plus POST /api/outlook. No framework; Node core only,
-// apart from the Anthropic SDK used in outlook.mjs.
+// SeaSensei's server: the built app (dist/), the daily wind discussion (JSON API, archive, RSS) and the
+// scheduler that writes it. No framework; Node core only, plus the Anthropic SDK in discussion.mjs.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import Anthropic from "@anthropic-ai/sdk";
-import { cacheKey, configured, generateOutlook, validateSpots } from "./outlook.mjs";
+import { configured } from "./discussion.mjs";
+import { describeError, publish, startScheduler, status } from "./publish.mjs";
+import * as store from "./store.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(process.env.DIST_DIR ?? path.join(here, "..", "dist"));
 const PORT = Number(process.env.PORT ?? 80);
-
-// Spend guards for a public endpoint. Only fresh generations count; cache hits are free.
-const DAILY_CAP = Number(process.env.OUTLOOK_DAILY_CAP ?? 40);
-const PER_IP_CAP = Number(process.env.OUTLOOK_PER_IP_CAP ?? 8);
+const SITE = (process.env.SITE_URL ?? "https://seasensei.com").replace(/\/$/, "");
+const ADMIN_TOKEN = process.env.DISCUSSION_ADMIN_TOKEN ?? "";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".mjs": "application/javascript",
@@ -21,8 +21,8 @@ const TYPES = {
   ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".txt": "text/plain",
 };
 
-function sendJson(res, status, body) {
-  res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+function sendJson(res, status, body, cache = "no-store") {
+  res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": cache });
   res.end(JSON.stringify(body));
 }
 
@@ -40,74 +40,71 @@ function serveStatic(req, res) {
   fs.createReadStream(file).pipe(res);
 }
 
-/* ---------------- outlook: cache, de-dupe, caps ---------------- */
+/* ---------------- discussion API ---------------- */
 
-const cache = new Map();    // key -> { at, outlook }
-const inflight = new Map(); // key -> Promise
-let day = "", total = 0;
-const perIp = new Map();
+const meta = () => { const { configured, publishHour, timeZone } = status(); return { configured, publishHour, timeZone }; };
 
-function underCaps(ip) {
-  const today = new Date().toISOString().slice(0, 10);
-  if (today !== day) { day = today; total = 0; perIp.clear(); }
-  if (total >= DAILY_CAP) return "The outlook has hit today's limit. It refreshes tomorrow.";
-  if ((perIp.get(ip) ?? 0) >= PER_IP_CAP) return "You've generated a lot of outlooks today. Try again tomorrow.";
-  return null;
+function handleDiscussion(url, res) {
+  const date = url.searchParams.get("date");
+  if (date != null && !store.isDate(date)) return sendJson(res, 400, { error: "bad_date", message: "date must be YYYY-MM-DD" });
+  const discussion = date ? store.get(date) : store.latest();
+  sendJson(res, 200, { discussion, ...meta() }, "public, max-age=300");
 }
 
-async function readBody(req, limit = 16_000) {
-  let size = 0; const chunks = [];
-  for await (const c of req) { size += c.length; if (size > limit) throw new Error("request too large"); chunks.push(c); }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
-}
+const safeEqual = (a, b) => {
+  const x = crypto.createHash("sha256").update(a).digest(), y = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(x, y);
+};
 
-async function handleOutlook(req, res) {
-  if (!configured()) return sendJson(res, 503, { error: "not_configured", message: "The AI outlook isn't set up on this server yet." });
-  let spots;
-  try { spots = validateSpots(await readBody(req)); } catch (e) { return sendJson(res, 422, { error: "bad_request", message: e.message }); }
-
-  const key = cacheKey(spots);
-  const hit = cache.get(key);
-  if (hit) return sendJson(res, 200, { ...hit.outlook, cached: true });
-
-  if (!inflight.has(key)) {
-    const ip = String(req.headers["cf-connecting-ip"] ?? req.socket.remoteAddress ?? "?");
-    const blocked = underCaps(ip);
-    if (blocked) return sendJson(res, 429, { error: "limit", message: blocked });
-    total++; perIp.set(ip, (perIp.get(ip) ?? 0) + 1);
-    const p = generateOutlook(spots)
-      .then((outlook) => {
-        cache.set(key, { at: Date.now(), outlook });
-        for (const [k] of cache) if (!k.startsWith(key.split(":")[0] + ":")) cache.delete(k); // drop earlier 3-h slots
-        console.log(`[outlook] ${spots.length} spots, ${outlook.usage.input} in / ${outlook.usage.output} out tokens, ${total}/${DAILY_CAP} today`);
-        return outlook;
-      })
-      .catch((e) => { total--; perIp.set(ip, Math.max(0, (perIp.get(ip) ?? 1) - 1)); throw e; }) // failures don't use up the allowance
-      .finally(() => inflight.delete(key));
-    inflight.set(key, p);
-  }
-
+/** Regenerate on demand. Off unless DISCUSSION_ADMIN_TOKEN is set; the scheduler needs none of this. */
+async function handleGenerate(req, res) {
+  if (!ADMIN_TOKEN) return sendJson(res, 404, { error: "disabled" });
+  const given = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+  if (!safeEqual(given, ADMIN_TOKEN)) return sendJson(res, 401, { error: "unauthorized" });
   try {
-    sendJson(res, 200, { ...(await inflight.get(key) ?? cache.get(key)?.outlook), cached: false });
+    const force = new URL(req.url, "http://x").searchParams.get("force") === "1";
+    const { status: outcome, discussion } = await publish({ force });
+    sendJson(res, 200, { status: outcome, date: discussion.date });
   } catch (e) {
-    // Most specific first; never string-match messages.
-    if (e instanceof Anthropic.AuthenticationError) { console.error("[outlook] bad API key"); return sendJson(res, 503, { error: "not_configured", message: "The AI outlook isn't configured correctly." }); }
-    if (e instanceof Anthropic.RateLimitError) return sendJson(res, 503, { error: "busy", message: "The forecaster is busy. Try again in a minute." });
-    if (e instanceof Anthropic.APIError) { console.error(`[outlook] API ${e.status}: ${e.message}`); return sendJson(res, 502, { error: "upstream", message: "The forecaster had a problem. Try again shortly." }); }
-    console.error("[outlook]", e);
-    return sendJson(res, 502, { error: "failed", message: e.message ?? "Couldn't write the outlook." });
+    console.error("[discussion] manual generation failed:", describeError(e));
+    sendJson(res, 502, { error: "failed", message: describeError(e) });
   }
 }
 
-const server = http.createServer(async (req, res) => {
-  const url = req.url ?? "/";
-  if (url === "/healthz") { res.writeHead(200); return res.end("ok"); }
-  if (url.startsWith("/api/outlook")) {
+/* ---------------- RSS ---------------- */
+
+const xml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+function feed(res) {
+  const items = store.list(30).map((i) => store.get(i.date)).filter(Boolean).map((d) => {
+    const link = `${SITE}/?discussion=${d.date}`;
+    const body = [d.bottomLine, ...d.drivers.map((x) => `${x.title}: ${x.detail} (${x.timing})`), d.uncertainty && `Uncertainty: ${d.uncertainty}`].filter(Boolean).join("\n\n");
+    return `<item><title>${xml(d.headline)}</title><link>${link}</link><guid isPermaLink="true">${link}</guid><pubDate>${new Date(d.generatedAt).toUTCString()}</pubDate><description>${xml(body)}</description></item>`;
+  });
+  const out = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>SeaSensei wind discussion</title><link>${SITE}/</link><description>A daily look at the fronts, pressure and storms steering the wind around Tampa Bay. AI-written from National Weather Service products.</description><language>en-us</language>${items.join("")}</channel></rss>`;
+  res.writeHead(200, { "Content-Type": "application/rss+xml; charset=utf-8", "Cache-Control": "public, max-age=900" });
+  res.end(out);
+}
+
+/* ---------------- routing ---------------- */
+
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url ?? "/", "http://x");
+  const p = url.pathname;
+  if (p === "/healthz") { res.writeHead(200); return res.end("ok"); }
+  if (p === "/api/discussion/generate") {
     if (req.method !== "POST") { res.writeHead(405, { Allow: "POST" }); return res.end(); }
-    return handleOutlook(req, res);
+    return handleGenerate(req, res);
   }
   if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405); return res.end(); }
+  if (p === "/api/discussion") return handleDiscussion(url, res);
+  if (p === "/api/discussions") return sendJson(res, 200, { items: store.list(), ...meta() }, "public, max-age=300");
+  if (p === "/feed.xml") return feed(res);
   serveStatic(req, res);
 });
 
-server.listen(PORT, () => console.log(`seasensei on :${PORT} · dist=${DIST} · outlook ${configured() ? "enabled" : "disabled (no ANTHROPIC_API_KEY)"} · caps ${DAILY_CAP}/day, ${PER_IP_CAP}/ip`));
+server.listen(PORT, () => {
+  console.log(`seasensei on :${PORT} · dist=${DIST} · discussion ${configured() ? `enabled, publishes ${status().publishHour}:00 ${status().timeZone}` : "disabled (no ANTHROPIC_API_KEY)"} · admin ${ADMIN_TOKEN ? "on" : "off"}`);
+  startScheduler();
+});

@@ -55,8 +55,12 @@ export async function mockApis(page: Page) {
     return json(route, all.length === 1 ? all[0] : all);
   });
 
-  // The LLM outlook (our own server endpoint). Tests that need other states override this route.
-  await page.route("**/api/outlook", (route) => json(route, outlookFixture()));
+  // The daily wind discussion (our own server). Tests that need other states override these routes.
+  await page.route(/\/api\/discussion(\?.*)?$/, (route) => {
+    const date = new URL(route.request().url()).searchParams.get("date");
+    return json(route, discussionResponse(date));
+  });
+  await page.route("**/api/discussions", (route) => json(route, { items: [0, 1].map((i) => { const d = discussionFixture(i); return { date: d.date, headline: d.headline, regime: d.regime, generatedAt: d.generatedAt }; }), configured: true }));
 
   await page.route("https://api.tidesandcurrents.noaa.gov/mdapi/**", (r) => json(r, { count: STATIONS.length, stations: STATIONS }));
   await page.route("https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?**", (route) => {
@@ -87,19 +91,43 @@ export async function mockApis(page: Page) {
   });
 }
 
-export function outlookFixture() {
-  const d = (i: number) => new Date(Date.now() + i * 864e5).toISOString().slice(0, 10);
-  const verdicts = ["maybe", "go", "go", "no", "maybe"] as const;
+const day = (i: number) => new Date(Date.now() - i * 864e5).toISOString().slice(0, 10);
+
+/** i = how many days ago it was published (0 = today). */
+export function discussionFixture(i = 0) {
+  const trends = ["easing", "steady", "building", "building", "unsettled", "light", "steady"] as const;
+  const labels = ["Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon"];
   return {
-    headline: "Sea breeze fills in most afternoons; Wednesday and Thursday look best.",
-    bestBet: { date: d(2), spot: "Skyway", window: "1–6 PM", why: "all four models agree on 18–22 kn SW" },
-    days: verdicts.map((v, i) => ({
-      date: d(i), summary: `Day ${i} summary.`, rating: v, confidence: i < 2 ? "high" : i < 4 ? "medium" : "low",
-      spots: [
-        { name: "Skyway", verdict: v, window: v === "no" ? "" : "1–6 PM", wind: "18–22 kn SW", note: "sea breeze" },
-        { name: "Picnic Island", verdict: v === "go" ? "maybe" : "no", window: "", wind: "12–15 kn SW", note: "a touch light" },
-      ],
+    date: day(i),
+    generatedAt: new Date(Date.now() - i * 864e5).toISOString(),
+    region: "Tampa Bay and west-central Florida Gulf coast",
+    timeZone: "America/New_York",
+    model: "claude-sonnet-5-5",
+    headline: i === 0 ? "A stalled front and Atlantic high hand the wind to the east this week." : "Yesterday's pattern: sea breeze, then storms.",
+    bottomLine: "A weak boundary lifts north while high pressure builds over the Atlantic, turning the flow easterly and offshore for the Gulf beaches by Thursday.",
+    regime: "Easterly flow, humid",
+    drivers: [
+      { kind: "front", title: "Cold front stalls north of the bay", detail: "A trailing boundary meanders across the Southeast before sagging south.", timing: "Thursday into the weekend", windImpact: "Winds veer northeast and freshen behind it.", sources: ["AFD", "WPC_EXT"] },
+      { kind: "pressure", title: "Atlantic high builds", detail: "The ridge strengthens offshore and tightens the gradient over the peninsula.", timing: "Wednesday onward", windImpact: "A steady east to southeast flow that is offshore on the Gulf side.", sources: ["WPC_SHORT", "MODEL"] },
+      { kind: "storms", title: "Afternoon storms return", detail: "Deeper moisture means daily thunderstorms that disrupt the wind.", timing: "Late afternoons", windImpact: "Gusty and unreliable near storms; lightning risk.", sources: ["AFD"] },
+    ],
+    days: labels.map((label, k) => ({
+      date: day(i - k), label, pattern: `Pattern ${k}.`, windTrend: trends[k], flow: k < 3 ? "E–SE" : "NE",
+      kiterTakeaway: `Takeaway ${k}.`, confidence: k < 3 ? "high" : "medium",
     })),
-    timeZone: "America/New_York", generatedAt: new Date().toISOString(), model: "claude-opus-5-5",
+    watch: [{ what: "How far south the front sags", when: "Clearer by Wednesday night" }],
+    uncertainty: "The back half of the week hinges on the front's timing; the sources disagree by a day.",
+    sources: [
+      { id: "AFD", name: "NWS Tampa Bay Area Forecast Discussion", issued: new Date().toISOString(), url: "https://forecast.weather.gov/product.php?site=NWS&issuedby=TBW&product=AFD" },
+      { id: "WPC_SHORT", name: "NWS Weather Prediction Center Short Range Discussion (days 1–3)", issued: new Date().toISOString(), url: "https://www.wpc.ncep.noaa.gov/discussions/hpcdiscussions.php?disc=pmdspd" },
+      { id: "WPC_EXT", name: "NWS Weather Prediction Center Extended Discussion (days 3–7)", issued: new Date().toISOString(), url: "https://www.wpc.ncep.noaa.gov/discussions/hpcdiscussions.php?disc=pmdepd" },
+      { id: "MODEL", name: "Forecast-model pressure and wind-direction trend (cross-check only)", issued: new Date().toISOString(), url: "https://open-meteo.com/en/docs/ecmwf-api" },
+    ],
+    missing: ["NHC"],
   };
+}
+
+export function discussionResponse(date: string | null) {
+  const found = [0, 1].map(discussionFixture).find((d) => !date || d.date === date) ?? null;
+  return { discussion: found, configured: true, publishHour: 6, timeZone: "America/New_York" };
 }

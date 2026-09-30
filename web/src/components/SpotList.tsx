@@ -4,13 +4,13 @@ import { useSpots } from "../lib/data";
 import { fmtWindow, useSpotNow } from "../lib/useSpotNow";
 import { compass, type Spot } from "../lib/wind";
 import { Knots, RideBadge, Skeleton, Sparkline, WindArrow } from "./bits";
-import { OutlookCard } from "./OutlookCard";
+import { DiscussionCard } from "./Discussion";
 
-export function SpotList({ onSelect }: { onSelect: (s: Spot) => void }) {
+export function SpotList({ onSelect, onOpenDiscussion }: { onSelect: (s: Spot) => void; onOpenDiscussion: (date: string) => void }) {
   const spots = useSpots();
   return (
     <div className="flex flex-col gap-2.5">
-      <OutlookCard spots={spots} />
+      <DiscussionCard onOpen={onOpenDiscussion} />
       <div className="flex items-baseline justify-between px-1">
         <h2 className="text-sm font-semibold tracking-wide text-white/80">Your spots</h2>
         <span className="text-xs text-white/40">HRRR 48 h · NBM to 7 days</span>

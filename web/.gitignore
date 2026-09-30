@@ -3,3 +3,6 @@ dist
 public/maplibre
 test-results
 playwright-report
+
+# local discussion archive (server/store.mjs default DATA_DIR)
+/data

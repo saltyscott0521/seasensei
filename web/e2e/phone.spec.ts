@@ -13,8 +13,8 @@ test("phone: bottom sheet, spot detail, timeline; nothing scrolls sideways", asy
   expect(card.y).toBeGreaterThan(0);
   expect(card.y + card.height).toBeLessThanOrEqual(sheet.y);
 
-  // the sheet's peek now leads with the outlook; open a spot from its map marker, as you would on a phone
-  await expect(page.getByRole("region", { name: "Forecaster's outlook" })).toBeVisible();
+  // the sheet's peek leads with the wind discussion; open a spot from its map marker, as you would on a phone
+  await expect(page.getByRole("region", { name: "Wind discussion" })).toBeVisible();
   // (the marker sits outside the sheet, which aria-hides it — see CLAUDE.md — so find it by class, not role)
   await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click();
   await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
@@ -33,4 +33,28 @@ test("phone: bottom sheet, spot detail, timeline; nothing scrolls sideways", asy
   const tiny = await page.evaluate(() => [...document.querySelectorAll("[data-vaul-drawer] button")]
     .filter((b) => { const r = b.getBoundingClientRect(); return r.width > 0 && (r.height < 32 || r.width < 32); }).map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim()));
   expect(tiny, `undersized controls in the sheet: ${JSON.stringify(tiny)}`).toEqual([]);
+});
+
+test("phone: the wind discussion opens as a full dialog, scrolls, and closes", async ({ page }) => {
+  await mockApis(page);
+  await page.goto("/");
+  // the summary is tappable from the sheet's low resting position, no need to expand it first
+  await page.getByRole("region", { name: "Wind discussion" }).getByRole("button", { name: "Read the full wind discussion" }).click();
+  const dialog = page.getByRole("dialog", { name: "Wind discussion" });
+  await expect(dialog.getByTestId("discussion-driver").first()).toBeVisible();
+  const box = (await dialog.boundingBox())!;
+  const vp = page.viewportSize()!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
+  expect(box.y).toBeGreaterThan(0); // leaves a sliver of map above; never taller than the screen
+  // long content scrolls inside the dialog, down to the sources and the AI disclaimer
+  await dialog.getByText(/Written by AI/).scrollIntoViewIfNeeded();
+  await expect(dialog.getByText(/Written by AI/)).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+  // thumb-sized controls
+  const tiny = await dialog.evaluate((el) => [...el.querySelectorAll("button, select")]
+    .filter((b) => { const r = b.getBoundingClientRect(); return r.width > 0 && (r.height < 32 || r.width < 32); }).map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim()));
+  expect(tiny, `undersized controls: ${JSON.stringify(tiny)}`).toEqual([]);
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(dialog).toBeHidden();
 });

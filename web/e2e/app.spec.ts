@@ -171,26 +171,61 @@ test("the timeline scrubs the week: header, markers and station layer follow the
   await expect(page.getByLabel(/Old Port Tampa: \d+ knots/)).toBeVisible();
 });
 
-test("the forecaster's outlook: headline, best bet, and each day's verdict per spot", async ({ page }) => {
-  const card = page.getByRole("region", { name: "Forecaster's outlook" });
-  await expect(card.getByTestId("outlook-headline")).toHaveText(/Wednesday and Thursday look best/);
-  await expect(card.getByText(/Best bet: .* · Skyway · 1–6 PM/)).toBeVisible();
-  const days = card.getByRole("tab");
-  await expect(days).toHaveCount(5);
-  await expect(days.nth(2)).toHaveAttribute("aria-selected", "true"); // opens on the best-bet day
-  await days.nth(3).click();
-  const detail = card.getByTestId("outlook-day");
-  await expect(detail).toContainText("Day 3 summary.");
-  await expect(detail.getByText("Skyway")).toBeVisible();
-  await expect(detail.getByText("No", { exact: true }).first()).toBeVisible();
-  await expect(card.getByText(/Written by AI from forecast models/)).toBeVisible();
+test("the wind discussion: card summary, full dialog with drivers, days, sources, and the archive", async ({ page }) => {
+  const card = page.getByRole("region", { name: "Wind discussion" });
+  await expect(card.getByTestId("discussion-headline")).toHaveText(/stalled front and Atlantic high/);
+  await expect(card.getByText("Easterly flow, humid")).toBeVisible();
+  await expect(card.getByRole("list", { name: "Day by day" }).getByRole("listitem")).toHaveCount(7);
+
+  await card.getByRole("button", { name: /Read the full discussion/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Wind discussion" });
+  await expect(dialog).toBeVisible();
+  await expect(page).toHaveURL(/\?discussion=\d{4}-\d{2}-\d{2}/); // a shareable permalink
+
+  const drivers = dialog.getByTestId("discussion-driver");
+  await expect(drivers).toHaveCount(3);
+  await expect(drivers.first()).toContainText("Cold front stalls north of the bay");
+  await expect(drivers.first()).toContainText("On the water:");
+  await expect(drivers.first()).toContainText("NWS Tampa Bay"); // its citations, as readable labels
+  await expect(dialog.getByTestId("discussion-day")).toHaveCount(7);
+  await expect(dialog.getByText("How far south the front sags")).toBeVisible();
+  await expect(dialog.getByRole("link", { name: /Area Forecast Discussion/ })).toHaveAttribute("href", /forecast\.weather\.gov/);
+  await expect(dialog.getByText(/Not available today: NHC outlook/)).toBeVisible();
+  await expect(dialog.getByText(/Written by AI \(claude-sonnet-5-5\) from the National Weather Service products/)).toBeVisible();
+  // it explains the pattern; it doesn't repeat wind numbers
+  expect(await dialog.textContent()).not.toMatch(/\b\d+\s?(kn|kt|kts|knots|mph)\b/i);
+
+  // the archive: step back a day, then come back
+  await dialog.getByRole("button", { name: "Older discussion" }).click();
+  await expect(dialog.getByRole("heading", { name: /Yesterday's pattern/ })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Older discussion" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Newer discussion" }).click();
+  await expect(dialog.getByRole("heading", { name: /stalled front/ })).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page).not.toHaveURL(/discussion=/);
+  await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible(); // Escape closed the dialog, not the list
 });
 
-test("the outlook says so plainly when it isn't available", async ({ page }) => {
-  await page.route("**/api/outlook", (route) => route.fulfill({ status: 503, contentType: "application/json",
-    body: JSON.stringify({ error: "not_configured", message: "The AI outlook isn't set up on this server yet." }) }));
+test("a discussion permalink opens that day's discussion straight away", async ({ page }) => {
+  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  await page.goto(`/?discussion=${yesterday}`);
+  await expect(page.getByRole("dialog", { name: "Wind discussion" }).getByRole("heading", { name: /Yesterday's pattern/ })).toBeVisible();
+  await page.goto("/?discussion=1999-01-01");
+  await expect(page.getByTestId("discussion-missing")).toHaveText(/No discussion was published for/);
+});
+
+test("the discussion says so plainly before the first one is published, and when it isn't switched on", async ({ page }) => {
+  const empty = (configured: boolean) => (route: import("@playwright/test").Route) => route.fulfill({ contentType: "application/json",
+    body: JSON.stringify({ discussion: null, configured, publishHour: 6, timeZone: "America/New_York" }) });
+  await page.route(/\/api\/discussion(\?.*)?$/, empty(true));
   await page.reload();
-  const card = page.getByRole("region", { name: "Forecaster's outlook" });
-  await expect(card.getByTestId("outlook-error")).toHaveText("The AI outlook isn't set up on this server yet.");
+  const card = page.getByRole("region", { name: "Wind discussion" });
+  await expect(card.getByTestId("discussion-empty")).toHaveText(/publishes around 6:00 ET/);
+
+  await page.route(/\/api\/discussion(\?.*)?$/, empty(false));
+  await page.reload();
+  await expect(card.getByTestId("discussion-empty")).toHaveText("The daily wind discussion isn't switched on for this server yet.");
   await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible(); // the rest of the app is unaffected
 });
