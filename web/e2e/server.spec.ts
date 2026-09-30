@@ -284,6 +284,10 @@ test("without an API key nothing is generated and the API says so; bad dates are
     }
     expect(await (await fetch(`${app.base}/api/discussion?date=1999-01-01`)).json()).toMatchObject({ discussion: null });
     expect((await fetch(`${app.base}/some/spa/route`)).headers.get("content-type")).toContain("text/html"); // the app still serves
+    // a missing hashed asset is a 404 that can't be cached, not index.html served as "immutable" JavaScript
+    const gone = await fetch(`${app.base}/assets/app-nope123.js`);
+    expect(gone.status).toBe(404);
+    expect(gone.headers.get("cache-control")).toBe("no-store");
     expect(await (await fetch(`${app.base}/feed.xml`)).text()).toContain("<channel>"); // an empty feed is still a valid feed
   } finally { await app.stop(); await stubs.close(); }
 });

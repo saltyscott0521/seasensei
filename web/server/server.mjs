@@ -30,7 +30,12 @@ function serveStatic(req, res) {
   const urlPath = decodeURIComponent(new URL(req.url, "http://x").pathname);
   let file = path.join(DIST, urlPath);
   if (!file.startsWith(DIST + path.sep) && file !== DIST) { res.writeHead(403); return res.end(); }
-  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, "index.html"); // SPA fallback
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    // A missing file with an extension is a 404, never index.html: during a deploy the old container can be asked
+    // for the new build's hashed assets, and an "immutable" HTML answer would get cached at the edge under a .js URL.
+    if (path.extname(urlPath)) { res.writeHead(404, { "Cache-Control": "no-store" }); return res.end(); }
+    file = path.join(DIST, "index.html"); // SPA fallback for app routes
+  }
   const ext = path.extname(file);
   const immutable = urlPath.startsWith("/assets/") || urlPath.startsWith("/maplibre/");
   res.writeHead(200, {

@@ -11,7 +11,11 @@ export default defineConfig({
     target: "es2022",
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
-      output: { manualChunks: (id) => (id.includes("maplibre-gl") ? "maplibre" : undefined) },
+      output: {
+        manualChunks: (id) => (id.includes("maplibre-gl") ? "maplibre" : undefined),
+        // Not "index-": that URL was cached as HTML at the edge during a deploy (see serveStatic in server.mjs).
+        entryFileNames: "assets/app-[hash].js",
+      },
     },
   },
 });
