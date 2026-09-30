@@ -195,6 +195,22 @@ test("the wind discussion: card summary, full dialog with drivers, days, sources
   // it explains the pattern; it doesn't repeat wind numbers
   expect(await dialog.textContent()).not.toMatch(/\b\d+\s?(kn|kt|kts|knots|mph)\b/i);
 
+  // drag the right edge to widen it (the dialog is centred, so it grows both ways); it remembers the width
+  const before = (await dialog.boundingBox())!;
+  const edge = dialog.getByRole("separator", { name: /right edge/ });
+  const eb = (await edge.boundingBox())!;
+  await page.mouse.move(eb.x + eb.width / 2, eb.y + eb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(eb.x + eb.width / 2 + 60, eb.y + eb.height / 2, { steps: 5 });
+  await page.mouse.up();
+  expect((await dialog.boundingBox())!.width).toBeGreaterThan(before.width + 100);
+  await edge.focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  expect((await dialog.boundingBox())!.width).toBeLessThan(before.width + 100);
+  await edge.dblclick();
+  expect(Math.round((await dialog.boundingBox())!.width)).toBe(720);
+
   // the archive: step back a day, then come back
   await dialog.getByRole("button", { name: "Older discussion" }).click();
   await expect(dialog.getByRole("heading", { name: /Yesterday's pattern/ })).toBeVisible();

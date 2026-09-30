@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, ChevronRight, Compass, ExternalLink, Feather, Gauge, Layers, Minus, Rss, Tornado, Triangle, TrendingDown, TrendingUp, X, Zap, CloudLightning, Wind } from "lucide-react";
-import { useEffect, useRef, type ComponentType } from "react";
+import { useEffect, useRef, useState, type ComponentType, type PointerEvent as RPointerEvent } from "react";
 import { useDiscussion, useDiscussionIndex } from "../lib/data";
 import { SOURCE_LABEL, fmtDay, type Discussion, type Kind, type Trend } from "../lib/discussion";
 import { Skeleton } from "./bits";
@@ -89,11 +89,48 @@ function DayStrip({ d, compact }: { d: Discussion; compact?: boolean }) {
 
 /* ---------------- the full discussion ---------------- */
 
+const W_KEY = "discussion-width", W_MIN = 480, W_DEFAULT = 720;
+const clampW = (w: number) => Math.round(Math.min(Math.max(w, W_MIN), Math.max(W_MIN, window.innerWidth - 48)));
+
+/** Dialog width on desktop: drag either edge (or use arrow keys on it) to widen; remembered per device. */
+function useDialogWidth() {
+  const [w, setW] = useState(() => {
+    try { const v = Number(localStorage.getItem(W_KEY)); return v ? clampW(v) : W_DEFAULT; } catch { return W_DEFAULT; }
+  });
+  const set = (v: number, save = false) => {
+    const c = clampW(v);
+    setW(c);
+    if (save) try { localStorage.setItem(W_KEY, String(c)); } catch { /* private mode: fine */ }
+  };
+  return [w, set] as const;
+}
+
+/** A thin grab bar on one edge. The dialog is centred, so dragging an edge by d changes the width by 2d. */
+function ResizeEdge({ side, width, onWidth }: { side: "left" | "right"; width: number; onWidth: (w: number, save?: boolean) => void }) {
+  const drag = useRef<{ x: number; w: number } | null>(null);
+  const sign = side === "right" ? 1 : -1;
+  const move = (e: RPointerEvent) => drag.current && onWidth(drag.current.w + sign * (e.clientX - drag.current.x) * 2);
+  const end = (e: RPointerEvent) => { if (drag.current) { onWidth(drag.current.w + sign * (e.clientX - drag.current.x) * 2, true); drag.current = null; } };
+  return (
+    <div role="separator" aria-orientation="vertical" aria-label={`Resize discussion (${side} edge)`} aria-valuenow={width} aria-valuemin={W_MIN} tabIndex={0}
+      onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); drag.current = { x: e.clientX, w: width }; }}
+      onPointerMove={move} onPointerUp={end} onPointerCancel={end}
+      onDoubleClick={() => onWidth(W_DEFAULT, true)}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); onWidth(width + (e.key === "ArrowRight" ? 1 : -1) * sign * 40, true); }
+      }}
+      className={`group absolute inset-y-0 z-10 hidden w-3 cursor-ew-resize touch-none md:block ${side === "right" ? "-right-1.5" : "-left-1.5"}`}>
+      <span className="absolute inset-y-6 left-1/2 w-1 -translate-x-1/2 rounded-full bg-white/0 transition group-hover:bg-white/25 group-focus-visible:bg-cyan-300/60 group-active:bg-cyan-300/60" />
+    </div>
+  );
+}
+
 export function DiscussionDialog({ date, onDate, onClose }: { date: string | null; onDate: (d: string) => void; onClose: () => void }) {
   const q = useDiscussion(date);
   const index = useDiscussionIndex(date != null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const d = q.data?.discussion;
+  const [width, setWidth] = useDialogWidth();
 
   useEffect(() => {
     if (date == null) return;
@@ -114,8 +151,11 @@ export function DiscussionDialog({ date, onDate, onClose }: { date: string | nul
           className="fixed inset-0 z-40 flex items-end justify-center bg-black/65 backdrop-blur-sm md:items-center md:p-6" onClick={onClose}>
           <motion.div role="dialog" aria-modal="true" aria-labelledby="discussion-title"
             initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }} transition={{ type: "spring", stiffness: 380, damping: 34 }}
-            onClick={(e) => e.stopPropagation()}
-            className="glass safe-b flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl md:max-w-[720px] md:rounded-3xl">
+            onClick={(e) => e.stopPropagation()} style={{ "--dw": `${width}px` } as React.CSSProperties}
+            className="glass safe-b relative flex max-h-[92dvh] w-full flex-col rounded-t-3xl md:w-[var(--dw)] md:max-w-[calc(100vw-3rem)] md:rounded-3xl">
+            <ResizeEdge side="left" width={width} onWidth={setWidth} />
+            <ResizeEdge side="right" width={width} onWidth={setWidth} />
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]">
             <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
               <Compass className="h-4 w-4 shrink-0 text-cyan-300" />
               <h2 id="discussion-title" className="text-sm font-semibold">Wind discussion</h2>
@@ -136,6 +176,7 @@ export function DiscussionDialog({ date, onDate, onClose }: { date: string | nul
                 : q.isError ? <p className="py-8 text-center text-sm text-white/55">Couldn't load this discussion.</p>
                 : q.data ? <p className="py-8 text-center text-sm text-white/55" data-testid="discussion-missing">No discussion was published for {fmtDay(date, { weekday: "long", month: "long", day: "numeric" })}.</p>
                 : <div className="flex flex-col gap-3" aria-busy="true"><Skeleton className="h-6 w-3/4" /><Skeleton className="h-20" /><Skeleton className="h-32" /></div>}
+            </div>
             </div>
           </motion.div>
         </motion.div>
