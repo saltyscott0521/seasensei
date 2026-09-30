@@ -42,3 +42,7 @@ The NWS API: AFD/CWF are per office, but WPC's PMD type mixes ~dozens of product
 - Open-Meteo's `gfs_seamless` swaps in HRRR for the first ~48 h. For an independent GFS use `gfs_global`.
 - Build test images from a git checkout or with `COPYFILE_DISABLE=1 tar`: macOS tar adds `._*` files that vitest
   tries to parse.
+- Missing files with an extension must 404 (`server.mjs`), never fall back to `index.html`. During a deploy Traefik sends
+  traffic to old and new containers; an old one answering a new hashed asset with immutable HTML got cached by Cloudflare
+  under the `.js` URL and blanked the site (twice, 2026-09-29; the entry chunk is `main-[hash].js` for that reason).
+  Don't poll a new asset URL during a swap from a script; wait for the health check.
