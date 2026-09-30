@@ -13,8 +13,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: (id) => (id.includes("maplibre-gl") ? "maplibre" : undefined),
-        // Not "index-": that URL was cached as HTML at the edge during a deploy (see serveStatic in server.mjs).
-        entryFileNames: "assets/app-[hash].js",
+        // Not "index-"/"app-": those URLs were cached as HTML at the edge during deploys (see serveStatic in server.mjs).
+        entryFileNames: "assets/main-[hash].js",
       },
     },
   },
