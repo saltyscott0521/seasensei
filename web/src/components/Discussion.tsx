@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, ChevronRight, Compass, ExternalLink, Feather, Gauge, Layers, Minus, Rss, Tornado, Triangle, TrendingDown, TrendingUp, X, Zap, CloudLightning, Wind } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useEffect, useRef, useState, type ComponentType, type PointerEvent as RPointerEvent } from "react";
 import { useDiscussion, useDiscussionIndex } from "../lib/data";
 import { SOURCE_LABEL, fmtDay, type Discussion, type Kind, type Trend } from "../lib/discussion";
@@ -144,11 +145,12 @@ export function DiscussionDialog({ date, onDate, onClose }: { date: string | nul
   const at = d ? dates.indexOf(d.date) : -1;
   const newer = at > 0 ? dates[at - 1] : null, older = at >= 0 && at < dates.length - 1 ? dates[at + 1] : null;
 
-  return (
+  // Portalled to <body> so it sits above the phone bottom sheet, which is itself portalled there.
+  return createPortal(
     <AnimatePresence>
       {date != null && (
         <motion.div key="scrim" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
-          className="fixed inset-0 z-40 flex items-end justify-center bg-black/65 backdrop-blur-sm md:items-center md:p-6" onClick={onClose}>
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/65 backdrop-blur-sm md:items-center md:p-6" onClick={onClose}>
           <motion.div role="dialog" aria-modal="true" aria-labelledby="discussion-title"
             initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }} transition={{ type: "spring", stiffness: 380, damping: 34 }}
             onClick={(e) => e.stopPropagation()} style={{ "--dw": `${width}px` } as React.CSSProperties}
@@ -157,8 +159,8 @@ export function DiscussionDialog({ date, onDate, onClose }: { date: string | nul
             <ResizeEdge side="right" width={width} onWidth={setWidth} />
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]">
             <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
-              <Compass className="h-4 w-4 shrink-0 text-cyan-300" />
-              <h2 id="discussion-title" className="text-sm font-semibold">Wind discussion</h2>
+              <Compass className="hidden h-4 w-4 shrink-0 text-cyan-300 sm:block" />
+              <h2 id="discussion-title" className="shrink-0 whitespace-nowrap text-sm font-semibold">Wind discussion</h2>
               <div className="ml-auto flex items-center gap-1">
                 <button aria-label="Older discussion" disabled={!older} onClick={() => older && onDate(older)} className="grid h-11 w-9 place-items-center rounded-lg text-white/70 disabled:opacity-25"><ChevronLeft className="h-4 w-4" /></button>
                 {dates.length > 0 ? (
@@ -181,7 +183,8 @@ export function DiscussionDialog({ date, onDate, onClose }: { date: string | nul
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }
 
