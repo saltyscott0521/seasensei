@@ -130,10 +130,10 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
       {expanded && createPortal(
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} role="dialog" aria-modal="true" aria-label={`${spot.name} wind charts`}
           className="fixed inset-0 z-[60] flex flex-col bg-[#05080f]/96 backdrop-blur-xl">
-          <div className="safe-t flex items-center gap-3 px-4 pb-2 md:px-8">
+          <div className="safe-t flex flex-wrap items-center gap-x-2 gap-y-2 px-4 pb-2 md:flex-nowrap md:gap-3 md:px-8">
             <h2 className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight">{spot.name}<span className="ml-2 text-sm font-normal text-white/40">{spot.min}–{spot.max} kn · {arcLabel(spot)}</span></h2>
-            <ChartHeader view={view} setView={setView} range={range} setRange={setRange} idSuffix="-x" />
-            <button onClick={() => setExpanded(false)} aria-label="Close full-screen chart" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-white/70 ring-1 ring-white/15 hover:bg-white/10"><X className="h-5 w-5" /></button>
+            <button onClick={() => setExpanded(false)} aria-label="Close full-screen chart" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-white/70 ring-1 ring-white/15 hover:bg-white/10 md:order-last"><X className="h-5 w-5" /></button>
+            <div className="w-full md:w-auto"><ChartHeader view={view} setView={setView} range={range} setRange={setRange} idSuffix="-x" /></div>
           </div>
           <div className="mx-auto w-full max-w-[1400px] flex-1 overflow-y-auto px-4 pb-6 md:px-8">
             <div className="mb-3 flex items-end justify-between gap-4">

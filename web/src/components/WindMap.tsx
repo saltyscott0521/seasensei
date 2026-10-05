@@ -24,9 +24,11 @@ type Props = {
   padding: { top: number; bottom: number; left: number; right: number };
   showStations: boolean;
   at: number | null; // null = now; else a forecast hour (ms)
+  /** Bottom-right is under the phone sheet, so phones pass top-right. */
+  controlPosition?: "top-right" | "bottom-right";
 };
 
-export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBounds, grid, padding, showStations, at }: Props) {
+export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBounds, grid, padding, showStations, at, controlPosition = "bottom-right" }: Props) {
   const initial = useMemo(() => {
     if (!spots.length) return { longitude: -82.6, latitude: 27.75, zoom: 9.5 };
     const lats = spots.map((s) => s.lat), lons = spots.map((s) => s.lon);
@@ -53,8 +55,8 @@ export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBo
       <WindParticles grid={grid} />
       <BoundsReporter onBounds={onBounds} />
       <FlyTo spots={spots} selectedId={selectedId} padding={padding} />
-      <NavigationControl position="bottom-right" showCompass={false} />
-      <GeolocateControl position="bottom-right" />
+      <NavigationControl position={controlPosition} showCompass={false} />
+      <GeolocateControl position={controlPosition} />
       {showStations && at == null && <StationMarkers />}
       {spots.map((s) => (
         <SpotMarker key={s.id} spot={s} selected={s.id === selectedId} onClick={() => onSelect(s)} dim={addMode} at={at} />

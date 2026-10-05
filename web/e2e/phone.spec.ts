@@ -58,3 +58,69 @@ test("phone: the wind discussion opens as a full dialog, scrolls, and closes", a
   await dialog.getByRole("button", { name: "Close" }).click();
   await expect(dialog).toBeHidden();
 });
+
+/** The control under the pointer, walking up to its button so an icon span still counts. */
+async function hitLabel(page: import("@playwright/test").Page, box: { x: number; y: number; width: number; height: number }) {
+  return page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    return el?.closest("button")?.getAttribute("aria-label") ?? el?.getAttribute("aria-label") ?? null;
+  }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+}
+
+test("phone: zoom and locate sit above the sheet, on the resting peek and after opening a spot", async ({ page }) => {
+  await mockApis(page);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible();
+  // Map controls sit outside the sheet, which aria-hides them — same as the markers — so locate by aria-label.
+  const control = (label: string) => page.locator(`button[aria-label="${label}"]`);
+  for (const label of ["Zoom in", "Find my location"]) {
+    const box = (await control(label).boundingBox())!;
+    expect(await hitLabel(page, box), label).toBe(label);
+  }
+  await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click();
+  await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
+  for (const label of ["Zoom in", "Zoom out", "Find my location"]) {
+    const box = (await control(label).boundingBox())!;
+    expect(await hitLabel(page, box), label).toBe(label);
+  }
+});
+
+test("phone: a short screen does not lay the timeline over the colour legend", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await mockApis(page);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible();
+  // Markers stack on a narrow map, and the sheet aria-hides them; hit the button itself.
+  await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click({ force: true });
+  await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
+  const timeline = (await page.getByTestId("outlook").locator("xpath=ancestor::div[contains(@class,'glass')][1]").boundingBox())!;
+  const legend = (await page.getByText("40+", { exact: true }).boundingBox())!;
+  const overlaps = timeline.x < legend.x + legend.width && timeline.x + timeline.width > legend.x
+    && timeline.y < legend.y + legend.height && timeline.y + timeline.height > legend.y;
+  expect(overlaps, `timeline ${JSON.stringify(timeline)} legend ${JSON.stringify(legend)}`).toBe(false);
+});
+
+test("phone: the discussion close button stays on a narrow screen", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await mockApis(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Read the full wind discussion" }).click();
+  const close = page.getByRole("dialog", { name: "Wind discussion" }).getByRole("button", { name: "Close" });
+  await expect(close).toBeVisible();
+  const box = (await close.boundingBox())!;
+  const vp = page.viewportSize()!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
+  await close.click();
+  await expect(page.getByRole("dialog", { name: "Wind discussion" })).toBeHidden();
+});
+
+test("phone: full-screen charts keep the spot name visible", async ({ page }) => {
+  await mockApis(page);
+  await page.goto("/");
+  await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click();
+  await page.getByRole("button", { name: "Expand charts to full screen" }).click();
+  const title = page.getByRole("dialog", { name: /Fort De Soto wind charts/ }).getByRole("heading", { name: /Fort De Soto/ });
+  await expect(title).toBeVisible();
+  expect((await title.boundingBox())!.width).toBeGreaterThan(80);
+});

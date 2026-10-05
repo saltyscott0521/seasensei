@@ -18,14 +18,37 @@ const mq = window.matchMedia("(min-width: 768px)");
 const useDesktop = () => useSyncExternalStore((l) => (mq.addEventListener("change", l), () => mq.removeEventListener("change", l)), () => mq.matches);
 
 const SNAPS = ["172px", 0.56, 0.94] as const;
+// Drawer is h-[96dvh] and Vaul translates it by (viewport − snap). Keep these in step with that.
+const DRAWER_H = 0.96;
+const TIMELINE_LIFT = 176;
+// Legend sits at top 84px and is ~40px tall; header buttons end ~120px below the safe area.
+const LEGEND_CLEAR = 132;
+
+let viewportBox = { vh: 0, sat: 0 };
+const readViewport = () => {
+  const vh = window.innerHeight;
+  const sat = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sat")) || 0;
+  if (viewportBox.vh !== vh || viewportBox.sat !== sat) viewportBox = { vh, sat };
+  return viewportBox;
+};
+const useViewport = () => useSyncExternalStore((l) => (window.addEventListener("resize", l), () => window.removeEventListener("resize", l)), readViewport);
+
+function sheetTopPx(snap: number | string | null, vh: number) {
+  const snapPx = typeof snap === "string" ? parseInt(snap, 10) : snap == null ? 172 : snap * vh;
+  return (1 - DRAWER_H) * vh + (vh - snapPx);
+}
 
 export default function App() {
   const spots = useSpots();
   const desktop = useDesktop();
+  const { vh, sat } = useViewport();
   const [view, setView] = useState<View>({ kind: "list" });
   const [pin, setPin] = useState<{ lat: number; lon: number } | null>(null);
   const [bounds, setBounds] = useState<Bounds | null>(null);
   const [snap, setSnap] = useState<number | string | null>(SNAPS[0]);
+  // Floating the timeline on a short phone (or a raised sheet) runs it through the legend.
+  // Then it rides inside the sheet instead, where it stays reachable.
+  const timelineFloats = sheetTopPx(snap, vh) >= LEGEND_CLEAR + sat + TIMELINE_LIFT;
   // The wind discussion dialog; `?discussion=YYYY-MM-DD` is its permalink (the RSS feed links to it).
   const [discussion, setDiscussion] = useState<string | null>(() => {
     const d = new URLSearchParams(location.search).get("discussion");
@@ -96,7 +119,8 @@ export default function App() {
       <WindMap spots={spots} selectedId={view.kind === "spot" ? view.id : null} onSelect={select}
         addMode={view.kind === "add"} pin={pin}
         onPin={(p) => { setPin(p); if (!desktop) setSnap(SNAPS[2]); }}
-        onBounds={setBounds} grid={grid} padding={padding} showStations={showStations} at={at} />
+        onBounds={setBounds} grid={grid} padding={padding} showStations={showStations} at={at}
+        controlPosition={desktop ? "bottom-right" : "top-right"} />
 
       {/* vignette so glass UI reads over the map */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/60 to-transparent" />
@@ -160,9 +184,12 @@ export default function App() {
               <Drawer.Title className="sr-only">Spots</Drawer.Title>
               {/* Inside the sheet on purpose: the sheet marks everything outside it aria-hidden, which
                   would hide the timeline from screen readers. Riding on its top edge keeps it reachable. */}
-              {snap !== SNAPS[2] && <div className="absolute inset-x-3 -top-[176px]">{timelineEl}</div>}
+              {snap !== SNAPS[2] && timelineFloats && <div className="absolute inset-x-3 -top-[176px]">{timelineEl}</div>}
               <div className="mx-auto mb-1 mt-2.5 h-1.5 w-10 shrink-0 rounded-full bg-white/25" />
-              <div className={`safe-b flex-1 px-4 pt-2 ${snap === SNAPS[2] ? "overflow-y-auto" : "overflow-hidden"}`}>{panel}</div>
+              <div className={`safe-b flex-1 px-4 pt-2 ${snap === SNAPS[2] ? "overflow-y-auto" : "overflow-hidden"}`}>
+                {snap !== SNAPS[2] && !timelineFloats && <div className="mb-3">{timelineEl}</div>}
+                {panel}
+              </div>
             </Drawer.Content>
           </Drawer.Portal>
         </Drawer.Root>

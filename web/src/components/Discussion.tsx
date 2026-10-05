@@ -160,12 +160,12 @@ export function DiscussionDialog({ date, onDate, onClose }: { date: string | nul
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]">
             <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
               <Compass className="hidden h-4 w-4 shrink-0 text-cyan-300 sm:block" />
-              <h2 id="discussion-title" className="shrink-0 whitespace-nowrap text-sm font-semibold">Wind discussion</h2>
-              <div className="ml-auto flex items-center gap-1">
+              <h2 id="discussion-title" className="min-w-0 flex-1 truncate text-sm font-semibold">Wind discussion</h2>
+              <div className="flex shrink-0 items-center gap-1">
                 <button aria-label="Older discussion" disabled={!older} onClick={() => older && onDate(older)} className="grid h-11 w-9 place-items-center rounded-lg text-white/70 disabled:opacity-25"><ChevronLeft className="h-4 w-4" /></button>
                 {dates.length > 0 ? (
                   <select aria-label="Discussion date" value={d?.date ?? date} onChange={(e) => onDate(e.target.value)}
-                    className="h-9 rounded-lg bg-white/[.07] px-2 text-xs text-white/85 outline-none ring-1 ring-white/10">
+                    className="h-9 max-w-[7.25rem] rounded-lg bg-white/[.07] px-2 text-xs text-white/85 outline-none ring-1 ring-white/10">
                     {dates.map((x) => <option key={x} value={x} className="bg-slate-900">{fmtDay(x, { weekday: "short", month: "short", day: "numeric" })}</option>)}
                   </select>
                 ) : <span className="px-1 text-xs text-white/50">{fmtDay(date, { weekday: "short", month: "short", day: "numeric" })}</span>}
