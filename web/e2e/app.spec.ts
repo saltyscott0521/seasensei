@@ -20,6 +20,9 @@ test("opens on the map with the three Tampa Bay spots, live stations and a wind 
   await expect(page.locator(".maplibregl-marker")).toHaveCount(3 + 3 + 1);
   await expect(page.getByLabel(/Old Port Tampa: \d+ knots/)).toBeVisible();
   await expect(page.getByLabel(/MacDill AFB \(MCF\): 6 knots/)).toBeVisible();
+  // airport meters are just the reading — no plane glyph — and the chart's target sits on the open map
+  await expect(page.locator(".maplibregl-marker", { hasText: "✈" })).toHaveCount(0);
+  await expect(page.getByTestId("view-target")).toBeVisible();
   // the station toggle hides them
   await page.getByRole("button", { name: "Show live stations" }).click();
   await expect(page.locator(".maplibregl-marker")).toHaveCount(3);

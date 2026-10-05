@@ -178,6 +178,9 @@ function AreaChart({ area, index, threshold, nbmFrom, midnights, onSeek }: {
         <text x={W - INSET - 2} y={m.y(threshold) - 3} textAnchor="end" fontSize="9" fontWeight="600" fill="rgb(255 255 255 / .75)" className="num"
           style={{ paintOrder: "stroke", stroke: "#0a101c", strokeWidth: 3 }}>{threshold} kn</text>
         <line x1={m.x(index)} x2={m.x(index)} y1={0} y2={H} stroke="white" strokeOpacity=".8" />
+        {area[index] && (
+          <line x1={m.x(index) - 7} x2={m.x(index) + 7} y1={m.y(area[index]!.peak)} y2={m.y(area[index]!.peak)} stroke="white" strokeOpacity=".9" />
+        )}
         {area[index] && <circle cx={m.x(index)} cy={m.y(area[index]!.peak)} r="3.2" fill={windColor(area[index]!.peak)} stroke="#05080f" strokeWidth="1.5" />}
       </svg>
     </div>

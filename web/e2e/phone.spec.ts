@@ -6,12 +6,17 @@ test("phone: bottom sheet, spot detail, timeline; nothing scrolls sideways", asy
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible();
   await expect(page.getByRole("slider", { name: "Forecast time" })).toBeVisible();
+  // the crosshair marks the open map the mini chart is summarising, above the sheet and the timeline
+  const target = (await page.getByTestId("view-target").boundingBox())!;
+  const sheetTop = (await page.locator("[data-vaul-drawer]").boundingBox())!;
+  expect(target.y + target.height).toBeLessThanOrEqual(sheetTop.y);
   await expect(page.getByRole("img", { name: "Wind in view over the next week" })).toBeVisible();
   // the timeline card sits fully above the sheet, not under it
   const card = (await page.getByTestId("outlook").locator("xpath=ancestor::div[contains(@class,'glass')][1]").boundingBox())!;
   const sheet = (await page.locator("[data-vaul-drawer]").boundingBox())!;
   expect(card.y).toBeGreaterThan(0);
   expect(card.y + card.height).toBeLessThanOrEqual(sheet.y);
+  expect(target.y + target.height).toBeLessThanOrEqual(card.y);
 
   // the sheet's peek leads with the wind discussion; open a spot from its map marker, as you would on a phone
   await expect(page.getByRole("region", { name: "Wind discussion" })).toBeVisible();

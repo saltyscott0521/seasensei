@@ -57,6 +57,7 @@ export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBo
       <FlyTo spots={spots} selectedId={selectedId} padding={padding} />
       <NavigationControl position={controlPosition} showCompass={false} />
       <GeolocateControl position={controlPosition} />
+      {/* Live meters are "right now". Scrubbing the timeline (at != null) hides them. */}
       {showStations && at == null && <StationMarkers />}
       {spots.map((s) => (
         <SpotMarker key={s.id} spot={s} selected={s.id === selectedId} onClick={() => onSelect(s)} dim={addMode} at={at} />
@@ -163,7 +164,6 @@ function StationMarker({ r, open, onToggle }: { r: LiveReading; open: boolean; o
         className="relative flex items-center gap-1 rounded-lg border border-white/10 bg-slate-950/75 px-1.5 py-0.5 backdrop-blur">
         <span style={{ color: c }}>{r.speed > 0.5 ? <WindArrow dir={r.dir} size={11} /> : <span className="block h-1.5 w-1.5 rounded-full bg-current" />}</span>
         <span className="num text-[11px] font-semibold" style={{ color: c }}>{Math.round(r.speed)}</span>
-        <span className="text-[9px] text-white/40">{r.source === "airport" ? "✈" : "◉"}</span>
         <AnimatePresence>
           {open && (
             <motion.span initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}

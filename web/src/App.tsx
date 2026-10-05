@@ -24,11 +24,11 @@ const TIMELINE_LIFT = 176;
 // Legend sits at top 84px and is ~40px tall; header buttons end ~120px below the safe area.
 const LEGEND_CLEAR = 132;
 
-let viewportBox = { vh: 0, sat: 0 };
+let viewportBox = { vh: 0, vw: 0, sat: 0 };
 const readViewport = () => {
-  const vh = window.innerHeight;
+  const vh = window.innerHeight, vw = window.innerWidth;
   const sat = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sat")) || 0;
-  if (viewportBox.vh !== vh || viewportBox.sat !== sat) viewportBox = { vh, sat };
+  if (viewportBox.vh !== vh || viewportBox.vw !== vw || viewportBox.sat !== sat) viewportBox = { vh, vw, sat };
   return viewportBox;
 };
 const useViewport = () => useSyncExternalStore((l) => (window.addEventListener("resize", l), () => window.removeEventListener("resize", l)), readViewport);
@@ -41,7 +41,7 @@ function sheetTopPx(snap: number | string | null, vh: number) {
 export default function App() {
   const spots = useSpots();
   const desktop = useDesktop();
-  const { vh, sat } = useViewport();
+  const { vh, vw, sat } = useViewport();
   const [view, setView] = useState<View>({ kind: "list" });
   const [pin, setPin] = useState<{ lat: number; lon: number } | null>(null);
   const [bounds, setBounds] = useState<Bounds | null>(null);
@@ -122,6 +122,10 @@ export default function App() {
         onBounds={setBounds} grid={grid} padding={padding} showStations={showStations} at={at}
         controlPosition={desktop ? "bottom-right" : "top-right"} />
 
+      {view.kind !== "add" && (
+        <ViewTarget desktop={desktop} vh={vh} vw={vw} sat={sat} sheetTop={sheetTopPx(snap, vh)} timelineFloats={timelineFloats} />
+      )}
+
       {/* vignette so glass UI reads over the map */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/60 to-transparent" />
 
@@ -198,6 +202,31 @@ export default function App() {
       <DiscussionDialog date={discussion} onDate={setDiscussion} onClose={() => setDiscussion(null)} />
 
       <Toaster theme="dark" position={desktop ? "bottom-right" : "top-center"} toastOptions={{ className: "!bg-slate-900/90 !backdrop-blur !border-white/10" }} />
+    </div>
+  );
+}
+
+/** Sits in the open part of the map: the mini chart summarises the wind around this point. */
+function ViewTarget({ desktop, vh, vw, sat, sheetTop, timelineFloats }: {
+  desktop: boolean; vh: number; vw: number; sat: number; sheetTop: number; timelineFloats: boolean;
+}) {
+  const top = desktop ? 96 : LEGEND_CLEAR + sat + 8;
+  const bottomEdge = desktop ? vh - 190 : (timelineFloats ? sheetTop - TIMELINE_LIFT : sheetTop) - 10;
+  const left = desktop ? 448 : 12;
+  const right = desktop ? vw - 72 : vw - 12;
+  if (bottomEdge - top < 72 || right - left < 72) return null;
+  return (
+    <div className="pointer-events-none absolute z-[5]" style={{ top, left, width: right - left, height: bottomEdge - top }}>
+      <div role="img" aria-label="Map centre. The wind chart summarises the area around this point." data-testid="view-target"
+        className="absolute left-1/2 top-1/2 h-9 w-9 -translate-x-1/2 -translate-y-1/2">
+        <span className="absolute left-0 top-0 h-2.5 w-2.5 border-l-2 border-t-2 border-white/90" />
+        <span className="absolute right-0 top-0 h-2.5 w-2.5 border-r-2 border-t-2 border-white/90" />
+        <span className="absolute bottom-0 left-0 h-2.5 w-2.5 border-b-2 border-l-2 border-white/90" />
+        <span className="absolute bottom-0 right-0 h-2.5 w-2.5 border-b-2 border-r-2 border-white/90" />
+        <span className="absolute left-1/2 top-1/2 h-3.5 w-px -translate-x-1/2 -translate-y-1/2 bg-white/80" />
+        <span className="absolute left-1/2 top-1/2 h-px w-3.5 -translate-x-1/2 -translate-y-1/2 bg-white/80" />
+        <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_6px_white]" />
+      </div>
     </div>
   );
 }
