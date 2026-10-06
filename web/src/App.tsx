@@ -206,7 +206,7 @@ export default function App() {
   );
 }
 
-/** Sits in the open part of the map: the mini chart summarises the wind around this point. */
+/** A faint full-screen cross. The intersection is the open map, which is what the mini chart summarises. */
 function ViewTarget({ desktop, vh, vw, sat, sheetTop, timelineFloats }: {
   desktop: boolean; vh: number; vw: number; sat: number; sheetTop: number; timelineFloats: boolean;
 }) {
@@ -215,18 +215,13 @@ function ViewTarget({ desktop, vh, vw, sat, sheetTop, timelineFloats }: {
   const left = desktop ? 448 : 12;
   const right = desktop ? vw - 72 : vw - 12;
   if (bottomEdge - top < 72 || right - left < 72) return null;
+  const cx = (left + right) / 2;
+  const cy = (top + bottomEdge) / 2;
   return (
-    <div className="pointer-events-none absolute z-[5]" style={{ top, left, width: right - left, height: bottomEdge - top }}>
-      <div role="img" aria-label="Map centre. The wind chart summarises the area around this point." data-testid="view-target"
-        className="absolute left-1/2 top-1/2 h-9 w-9 -translate-x-1/2 -translate-y-1/2">
-        <span className="absolute left-0 top-0 h-2.5 w-2.5 border-l-2 border-t-2 border-white/90" />
-        <span className="absolute right-0 top-0 h-2.5 w-2.5 border-r-2 border-t-2 border-white/90" />
-        <span className="absolute bottom-0 left-0 h-2.5 w-2.5 border-b-2 border-l-2 border-white/90" />
-        <span className="absolute bottom-0 right-0 h-2.5 w-2.5 border-b-2 border-r-2 border-white/90" />
-        <span className="absolute left-1/2 top-1/2 h-3.5 w-px -translate-x-1/2 -translate-y-1/2 bg-white/80" />
-        <span className="absolute left-1/2 top-1/2 h-px w-3.5 -translate-x-1/2 -translate-y-1/2 bg-white/80" />
-        <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_6px_white]" />
-      </div>
+    <div role="img" aria-label="Map centre. The wind chart summarises the area around this point." data-testid="view-target"
+      className="pointer-events-none absolute inset-0 z-[1]" style={{ "--cx": `${cx}px`, "--cy": `${cy}px` } as React.CSSProperties}>
+      <div className="absolute inset-y-0 w-px bg-white/[0.16]" style={{ left: "var(--cx)" }} />
+      <div className="absolute inset-x-0 h-px bg-white/[0.16]" style={{ top: "var(--cy)" }} />
     </div>
   );
 }
