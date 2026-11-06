@@ -7,7 +7,7 @@ import type { Range } from "./ForecastChart";
 const L = 32, R = 10, T = 14, B = 30;
 const HOUR = 3600e3;
 
-/** HRRR, NBM, ECMWF and GFS on one axis. The shaded band is the spread between them — a free confidence signal. */
+/** HRRR, RRFS, NBM, ECMWF and GFS on one axis. The shaded band is the spread between them — a free confidence signal. */
 export function ModelChart({ data, spot, range, tz, maxH = 560 }: { data: ModelCompare; spot: Spot; range: Range; tz: string; maxH?: number }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [wrapRef, { w: W, h: H }] = useChartSize(250, 0.62, maxH);
@@ -105,7 +105,7 @@ export function ModelChart({ data, spot, range, tz, maxH = 560 }: { data: ModelC
       </svg>
       </div>
 
-      <div className="mt-2 grid grid-cols-4 gap-1.5">
+      <div className="mt-2 grid grid-cols-5 gap-1.5">
         {MODELS.map((mm) => {
           const v = data.series[mm.key]?.[shownI];
           return (
@@ -118,7 +118,7 @@ export function ModelChart({ data, spot, range, tz, maxH = 560 }: { data: ModelC
       </div>
       <p className="mt-2 px-1 text-[10px] text-white/35">
         {new Intl.DateTimeFormat([], { timeZone: tz, weekday: "short", hour: "numeric" }).format(data.times[shownI])}
-        {sp ? ` · spread ${sp.min.toFixed(0)}–${sp.max.toFixed(0)} kn` : ""} · drag to scrub · HRRR ends at 48 h
+        {sp ? ` · spread ${sp.min.toFixed(0)}–${sp.max.toFixed(0)} kn` : ""} · drag to scrub · HRRR ends at 48 h, RRFS at 84 h
       </p>
     </div>
   );

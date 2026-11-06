@@ -26,11 +26,12 @@ function locationPayload(url: URL, lat: number, lon: number, i: number) {
   const q = url.searchParams, hourly = q.get("hourly")!, models = (q.get("models") ?? "").split(",");
   const times = hourlyTimes();
   const cut = nowHour() + 48 * HOUR; // HRRR ends at 48 h
+  const rrfsCut = nowHour() + 84 * HOUR; // RRFS at 84 h
   const out: Record<string, unknown> = { time: times };
   const add = (variable: string, fn: (t: number, model: string) => number) => {
-    for (const m of models) out[`${variable}_${m}`] = times.map((t) => (m === "gfs_hrrr" && t > cut ? null : +(fn(t, m) + (i % 3) * 0.2).toFixed(1)));
+    for (const m of models) out[`${variable}_${m}`] = times.map((t) => ((m === "gfs_hrrr" && t > cut) || (m === "ncep_rrfs_conus" && t > rrfsCut) ? null : +(fn(t, m) + (i % 3) * 0.2).toFixed(1)));
   };
-  const bias: Record<string, number> = { gfs_hrrr: 0, ncep_nbm_conus: -1, ecmwf_ifs025: -3, gfs_global: 1 };
+  const bias: Record<string, number> = { gfs_hrrr: 0, ncep_rrfs_conus: 0.5, ncep_nbm_conus: -1, ecmwf_ifs025: -3, gfs_global: 1 };
   if (hourly.includes("wind_speed_10m")) add("wind_speed_10m", (t, m) => speedAt(t) + (bias[m] ?? 0));
   if (hourly.includes("wind_gusts_10m")) add("wind_gusts_10m", (t, m) => speedAt(t) + 4 + (bias[m] ?? 0));
   if (hourly.includes("wind_direction_10m")) add("wind_direction_10m", () => dirAt());

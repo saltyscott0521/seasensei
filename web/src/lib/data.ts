@@ -104,7 +104,7 @@ export const useObsHistory = (station: string | undefined) =>
     retry: 1,
   });
 
-/** HRRR, NBM, ECMWF and GFS side by side for one spot (one request). */
+/** HRRR, RRFS, NBM, ECMWF and GFS side by side for one spot (one request). */
 export const useModelCompare = (spot: Spot | undefined, enabled: boolean) =>
   useQuery({
     queryKey: ["models", spot?.lat, spot?.lon],

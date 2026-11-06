@@ -348,6 +348,7 @@ export function scoreForecast(hours: Hour[], obs: Obs[]): Score | null {
 
 export const MODELS = [
   { key: "gfs_hrrr", label: "HRRR", color: "#22d3ee", note: "3 km, to 48 h" },
+  { key: "ncep_rrfs_conus", label: "RRFS", color: "#f472b6", note: "3 km, NOAA's new model, to 84 h" },
   { key: "ncep_nbm_conus", label: "NBM", color: "#facc15", note: "NOAA blend, to 7 d" },
   { key: "ecmwf_ifs025", label: "ECMWF", color: "#a78bfa", note: "European, to 7 d" },
   { key: "gfs_global", label: "GFS", color: "#fb923c", note: "US global, to 7 d" },

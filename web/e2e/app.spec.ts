@@ -73,7 +73,7 @@ test("a spot's detail: live vs model, 7 days with NBM, forecast vs actual, model
   await expect(dialog).toBeHidden();
 
   await page.getByRole("button", { name: "Models" }).click();
-  for (const m of ["HRRR", "NBM", "ECMWF", "GFS"]) await expect(page.getByText(m, { exact: true }).first()).toBeVisible();
+  for (const m of ["HRRR", "RRFS", "NBM", "ECMWF", "GFS"]) await expect(page.getByText(m, { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/Next 48 h: .*(agree|disagree)/i)).toBeVisible();
 });
 
