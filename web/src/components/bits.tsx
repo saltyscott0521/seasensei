@@ -1,7 +1,9 @@
 import { motion } from "motion/react";
 import NumberFlow from "@number-flow/react";
 import clsx from "clsx";
-import { compass, windColor, type Ride } from "../lib/wind";
+import { ChevronDown } from "lucide-react";
+import { setPrimaryModel, usePrimaryModel } from "../lib/data";
+import { chainLabel, compass, MODEL_INFO, PRIMARY_MODELS, windColor, type Model, type Ride } from "../lib/wind";
 
 /** Arrow pointing DOWNWIND (where the wind is going), spring-rotated. */
 export function WindArrow({ dir, size = 16, className }: { dir: number; size?: number; className?: string }) {
@@ -91,5 +93,20 @@ export function Sparkline({ values, min, max, width = 120, height = 32 }: { valu
       <rect x="0" width={width} y={y(max)} height={Math.max(0, y(min) - y(max))} fill="rgb(52 211 153 / .1)" />
       <path d={d} fill="none" stroke="rgb(255 255 255 / .75)" strokeWidth="1.5" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+/** Which model leads the forecast everywhere (map, timeline, spots). The others fill in where it runs out. */
+export function ModelPicker({ className = "" }: { className?: string }) {
+  const primary = usePrimaryModel();
+  return (
+    <label className={`relative inline-flex items-center gap-1.5 text-xs text-white/45 ${className}`}>
+      <span className="sr-only">Forecast model</span>
+      <select value={primary} onChange={(e) => setPrimaryModel(e.target.value as Model)} title={MODEL_INFO[primary].note}
+        className="num cursor-pointer appearance-none rounded-full bg-white/[.06] py-1 pl-2.5 pr-6 text-xs font-medium text-white/75 ring-1 ring-white/10 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50">
+        {PRIMARY_MODELS.map((m) => <option key={m} value={m} className="bg-[#0b1220]">{chainLabel(m)}</option>)}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 text-white/45" aria-hidden />
+    </label>
   );
 }

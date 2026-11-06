@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import { useMemo, useRef, useState } from "react";
 import { useChartSize } from "./useChartSize";
+import { usePrimaryModel } from "../lib/data";
 import { agreement, MODELS, spreadAt, type ModelCompare, type Spot } from "../lib/wind";
 import type { Range } from "./ForecastChart";
 
@@ -10,6 +11,7 @@ const HOUR = 3600e3;
 /** HRRR, RRFS, NBM, ECMWF and GFS on one axis. The shaded band is the spread between them — a free confidence signal. */
 export function ModelChart({ data, spot, range, tz, maxH = 560 }: { data: ModelCompare; spot: Spot; range: Range; tz: string; maxH?: number }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const primary = usePrimaryModel();
   const [wrapRef, { w: W, h: H }] = useChartSize(250, 0.62, maxH);
   const [cursor, setCursor] = useState<number | null>(null);
 
@@ -92,7 +94,7 @@ export function ModelChart({ data, spot, range, tz, maxH = 560 }: { data: ModelC
         ))}
         {m.band && <motion.path key={`b-${range}`} d={m.band} fill="rgb(255 255 255 / .09)" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.8 }} />}
         {m.paths.map((p, k) => (
-          <motion.path key={`${p.key}-${range}`} d={p.d} fill="none" stroke={p.color} strokeWidth={p.key === "gfs_hrrr" ? 2.4 : 1.8}
+          <motion.path key={`${p.key}-${range}`} d={p.d} fill="none" stroke={p.color} strokeWidth={p.id === primary ? 2.6 : 1.8}
             strokeLinejoin="round" strokeLinecap="round" opacity={0.95}
             initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1, delay: 0.1 * k, ease: "easeOut" }} />
         ))}

@@ -5,8 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { spotStore, useModelCompare, useObsHistory } from "../lib/data";
 import { ago, fmtWindow, useReferenceStation, useSpotNow } from "../lib/useSpotNow";
-import { arcLabel, compass, isRideable, nearestHour, rideState, scoreForecast, windColor, type Hour, type Spot } from "../lib/wind";
-import { Dial, Knots, RideBadge, Skeleton, WindArrow } from "./bits";
+import { arcLabel, compass, isRideable, MODEL_INFO, nearestHour, rideState, scoreForecast, windColor, type Hour, type Spot } from "../lib/wind";
+import { Dial, Knots, ModelPicker, RideBadge, Skeleton, WindArrow } from "./bits";
 import { DirectionPicker, RangeSlider, StationPicker } from "./controls";
 import { ForecastChart, windowFor, type Range } from "./ForecastChart";
 import { BarChart } from "./BarChart";
@@ -33,8 +33,8 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
   }, [expanded]);
   const ride = shown ? rideState(shown.speed, spot, shown.dir) : null;
   const when = scrub
-    ? new Intl.DateTimeFormat([], { timeZone: tz, weekday: "short", hour: "numeric" }).format(scrub.t) + (scrub.model === "nbm" ? " · NBM" : " · HRRR")
-    : now?.source === "live" ? `Live · ${now.stationName}${now.km != null ? ` (${now.km < 10 ? now.km.toFixed(1) : Math.round(now.km)} km)` : ""} · ${ago(now.t)}` : "Now · HRRR model";
+    ? new Intl.DateTimeFormat([], { timeZone: tz, weekday: "short", hour: "numeric" }).format(scrub.t) + ` · ${MODEL_INFO[scrub.model].label}`
+    : now?.source === "live" ? `Live · ${now.stationName}${now.km != null ? ` (${now.km < 10 ? now.km.toFixed(1) : Math.round(now.km)} km)` : ""} · ${ago(now.t)}` : `Now · ${model ? MODEL_INFO[model.model].label : "forecast"} model`;
 
   // In the full-screen view, leave room for the bar chart and readout below the line chart.
   const maxH = expanded ? Math.max(250, Math.round(window.innerHeight * 0.44)) : 560;
@@ -96,7 +96,7 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
 
         {!scrub && now?.source === "live" && model && (
           <div className="relative mt-4 flex items-center justify-between rounded-xl bg-black/20 px-3 py-2 text-xs">
-            <span className="text-white/50">HRRR said for this hour</span>
+            <span className="text-white/50">{MODEL_INFO[model.model].label} said for this hour</span>
             <span className="num flex items-center gap-1.5 text-white/80"><WindArrow dir={model.dir} size={12} />{Math.round(model.speed)} kn · g{Math.round(model.gust)}
               <DeltaPill d={now.speed - model.speed} /></span>
           </div>
@@ -109,7 +109,7 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
         <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1">
           {windows.length ? windows.map((w, i) => (
             <motion.span key={w.start} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.05 * i }}
-              title={w.start >= nbmStart ? "NBM (days 3–7): lower confidence" : "HRRR"}
+              title={w.start >= nbmStart ? "NBM (later in the week): lower confidence" : MODEL_INFO[nearestHour(fc.data.hours, w.start)?.model ?? "hrrr"].label}
               className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ${w.start >= nbmStart
                 ? "border border-dashed border-emerald-400/35 text-emerald-200/75"
                 : "bg-emerald-400/12 text-emerald-200 ring-1 ring-emerald-400/25"}`}>
@@ -124,7 +124,10 @@ export function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void })
         <div className="rounded-3xl border border-white/[.07] bg-white/[.025] p-3">
           <ChartHeader view={view} setView={setView} range={range} setRange={setRange} onExpand={() => setExpanded(true)} />
           {chartBody}
-          <p className="px-1 pt-1 text-[10px] text-white/30">Drag to scrub · white = what the station measured · HRRR to 48 h, then NOAA NBM · via Open-Meteo</p>
+          <div className="flex items-center justify-between gap-2 px-1 pt-1">
+            <p className="text-[10px] text-white/30">Drag to scrub · white = what the station measured · via Open-Meteo</p>
+            {view === "forecast" && <ModelPicker className="shrink-0" />}
+          </div>
         </div>
       )}
       {expanded && createPortal(

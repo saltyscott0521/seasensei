@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { useMemo, useRef } from "react";
-import { windGradient, compass, inArc, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
+import { handoffs, MODEL_INFO, windGradient, compass, inArc, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
 import { L, R, T, windowFor, type Range } from "./ForecastChart";
 import { useChartSize } from "./useChartSize";
 
@@ -41,10 +41,10 @@ export function BarChart({ forecast, spot, range, obs, scrubT, onScrub }: {
     const slot = plotW / Math.max(hs.length - 1, 1);
     const barW = Math.max(1.5, slot - (slot > 9 ? 3 : slot > 4 ? 1.2 : 0.6));
     const ticks = [0, 10, 20, 30, 40, 50].filter((v) => v <= top);
-    const nbm = hs.find((h) => h.model === "nbm");
+    const hand = handoffs(hs).map((d) => ({ ...d, x: x(d.t) }));
     const every = slot >= 22 ? 1 : slot >= 11 ? 2 : slot >= 6 ? 4 : slot >= 3 ? 8 : 24;
     const seen = (obs ?? []).filter((o) => o.t >= t0 && o.t <= t1 && Math.abs(Math.round(o.t / HOUR) * HOUR - o.t) < 4 * 60e3 + 1);
-    return { t0, t1, top, x, y, plotH, slot, barW, ticks, nbmX: nbm ? x(nbm.t) : null, every, seen };
+    return { t0, t1, top, x, y, plotH, slot, barW, ticks, hand, every, seen };
   }, [hs, spot, obs, W, H]);
 
   const tz = forecast.timeZone;
@@ -115,12 +115,15 @@ export function BarChart({ forecast, spot, range, obs, scrubT, onScrub }: {
           <circle key={o.t} cx={m.x(Math.round(o.t / HOUR) * HOUR)} cy={m.y(o.speed)} r={Math.min(3.2, Math.max(1.6, m.slot / 3))} fill="white" stroke="#05080f" strokeWidth="1" />
         ))}
 
-        {m.nbmX != null && (
-          <g pointerEvents="none">
-            <line x1={m.nbmX} x2={m.nbmX} y1={T} y2={H - B + 4} stroke="rgb(250 204 21 / .5)" strokeDasharray="3 3" />
-            <text x={m.nbmX + 4} y={T + 9} fontSize="9" fontWeight="600" fill="rgb(250 204 21 / .8)">NBM</text>
-          </g>
-        )}
+        {m.hand.map((d) => {
+          const to = MODEL_INFO[d.to], right = W - R - d.x > to.label.length * 5.4 + 8;
+          return (
+            <g key={d.t} pointerEvents="none">
+              <line x1={d.x} x2={d.x} y1={T} y2={H - B + 4} stroke={to.color} strokeOpacity=".5" strokeDasharray="3 3" />
+              <text x={right ? d.x + 4 : d.x - 4} y={T + 9} textAnchor={right ? "start" : "end"} fontSize="9" fontWeight="600" fill={to.color} fillOpacity=".8">{to.label}</text>
+            </g>
+          );
+        })}
         {nowX != null && (
           <g pointerEvents="none">
             <line x1={nowX} x2={nowX} y1={T} y2={H - B + 4} stroke="rgb(255 255 255 / .55)" strokeDasharray="2 3" />

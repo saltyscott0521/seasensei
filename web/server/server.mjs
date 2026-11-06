@@ -1,5 +1,6 @@
 // SeaSensei's server: the built app (dist/), the daily wind discussion (JSON API, archive, RSS) and the
-// scheduler that writes it. No framework; Node core only, plus the Anthropic SDK in discussion.mjs.
+// scheduler that writes it, and the forecast-run archive (archive.mjs, to R2). No framework; Node core only,
+// plus the Anthropic SDK in discussion.mjs and aws4fetch (R2 request signing) in archive.mjs.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { configured } from "./discussion.mjs";
 import { describeError, publish, startScheduler, status } from "./publish.mjs";
 import * as store from "./store.mjs";
+import * as archive from "./archive.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(process.env.DIST_DIR ?? path.join(here, "..", "dist"));
@@ -106,10 +108,12 @@ const server = http.createServer((req, res) => {
   if (p === "/api/discussion") return handleDiscussion(url, res);
   if (p === "/api/discussions") return sendJson(res, 200, { items: store.list(), ...meta() }, "public, max-age=300");
   if (p === "/feed.xml") return feed(res);
+  if (p === "/api/archive") return sendJson(res, 200, archive.status());
   serveStatic(req, res);
 });
 
 server.listen(PORT, () => {
-  console.log(`seasensei on :${PORT} · dist=${DIST} · discussion ${configured() ? `enabled, publishes ${status().publishHour}:00 ${status().timeZone}` : "disabled (no ANTHROPIC_API_KEY)"} · admin ${ADMIN_TOKEN ? "on" : "off"}`);
+  console.log(`seasensei on :${PORT} · dist=${DIST} · discussion ${configured() ? `enabled, publishes ${status().publishHour}:00 ${status().timeZone}` : "disabled (no ANTHROPIC_API_KEY)"} · admin ${ADMIN_TOKEN ? "on" : "off"} · forecast archive ${archive.configured() ? `to R2 bucket ${process.env.R2_BUCKET}` : "off (no R2 settings)"}`);
   startScheduler();
+  archive.startArchive();
 });

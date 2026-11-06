@@ -5,6 +5,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 import { expect, test } from "@playwright/test";
 
 /**
@@ -64,7 +65,15 @@ const PRODUCTS: Record<string, { office: string; type: string; text: string }> =
 };
 
 type Anthropic = { headers: http.IncomingHttpHeaders; body: any };
-type Stubs = { url: string; calls: Anthropic[]; failNhc: boolean; leakFirst: boolean; close: () => Promise<void> };
+type Put = { path: string; headers: http.IncomingHttpHeaders; body: Buffer };
+type Stubs = {
+  url: string; calls: Anthropic[]; failNhc: boolean; leakFirst: boolean;
+  runs: Record<string, number>; puts: Put[]; metaHits: number; archiveAsks: URLSearchParams[]; close: () => Promise<void>;
+};
+// The stand-in Open-Meteo's current run per dataset (unix seconds). 01Z NBM isn't a 3-hourly run, so it's skipped.
+const HOUR_S = 3600;
+const RUN0 = Math.floor(Date.now() / 1000 / (6 * HOUR_S)) * 6 * HOUR_S - 6 * HOUR_S; // a recent 00/06/12/18Z
+const initialRuns = () => ({ ncep_hrrr_conus: RUN0 + 5 * HOUR_S, ncep_rrfs_conus: RUN0, ncep_nbm_conus: RUN0 + HOUR_S, ecmwf_ifs025: RUN0, ncep_gfs013: RUN0 });
 
 function draft(over: Record<string, unknown> = {}) {
   const detail = { detail: "Why it matters in a sentence or two.", timing: "Thursday", windImpact: "Winds turn easterly and offshore on the Gulf beaches." };
@@ -85,11 +94,46 @@ function draft(over: Record<string, unknown> = {}) {
 }
 
 async function startStubs(): Promise<Stubs> {
-  const stubs = { calls: [] as Anthropic[], failNhc: false, leakFirst: false } as Stubs;
+  const stubs = { calls: [] as Anthropic[], failNhc: false, leakFirst: false, runs: initialRuns(), puts: [] as Put[], metaHits: 0, archiveAsks: [] as URLSearchParams[] } as Stubs;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url!, "http://x");
     const send = (status: number, body: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     const p = url.pathname;
+
+    // R2 (S3 API): keep what was PUT
+    if (req.method === "PUT" && p.startsWith("/kite-archive/")) {
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => { stubs.puts.push({ path: p, headers: req.headers, body: Buffer.concat(chunks) }); res.writeHead(200); res.end(); });
+      return;
+    }
+    // Open-Meteo run metadata
+    const meta = p.match(/^\/data\/(\w+)\/static\/meta\.json$/);
+    if (meta && stubs.runs[meta[1]] != null) {
+      stubs.metaHits++;
+      const run = stubs.runs[meta[1]];
+      return send(200, { last_run_initialisation_time: run, last_run_availability_time: run + 1800, data_end_time: run + 48 * HOUR_S, temporal_resolution_seconds: 3600 });
+    }
+    // Stations for the archive's points: two NOAA sensors in the bay, one far away; one airport
+    if (p === "/mdapi/prod/webapi/stations.json") return send(200, { stations: [
+      { id: "8726607", name: "Old Port Tampa", lat: 27.8578, lng: -82.5528 },
+      { id: "8726724", name: "Clearwater Beach", lat: 27.9783, lng: -82.8317 },
+      { id: "8518750", name: "The Battery", lat: 40.7006, lng: -74.0142 },
+    ] });
+    if (p === "/api/1/currents.json") return send(200, { data: [{ station: "SPG", name: "ST PETERSBURG", lat: 27.765, lon: -82.627, sknt: 8 }] });
+    // The archive's forecast request: one model, wind + temperature + pressure, many points
+    if (p === "/v1/forecast" && url.searchParams.get("hourly")?.includes("wind_gusts_10m")) {
+      stubs.archiveAsks.push(url.searchParams);
+      const lats = url.searchParams.get("latitude")!.split(","), lons = url.searchParams.get("longitude")!.split(",");
+      const start = Math.floor(Date.now() / 86400e3) * 86400 - 86400; // past_days=1
+      const time = Array.from({ length: 24 * 4 }, (_, i) => start + i * HOUR_S);
+      const vars = url.searchParams.get("hourly")!.split(",");
+      return send(200, lats.map((la, i) => ({
+        latitude: +la + 0.01, longitude: +lons[i] - 0.01, elevation: 0,
+        hourly_units: { time: "unixtime", wind_speed_10m: "kn" },
+        hourly: { time, ...Object.fromEntries(vars.map((v) => [v, time.map((t) => (t % 7) + i)])) },
+      })));
+    }
 
     if (req.method === "POST" && p === "/v1/messages") {
       let raw = "";
@@ -143,7 +187,7 @@ async function startServer(stubs: Stubs, env: Record<string, string> = {}): Prom
     cwd: serverDir,
     env: {
       PATH: process.env.PATH, PORT: String(port), DIST_DIR: distDir, DATA_DIR: dataDir,
-      NWS_BASE: stubs.url, OPENMETEO_BASE: stubs.url, ANTHROPIC_BASE_URL: stubs.url, ANTHROPIC_API_KEY: "test-key",
+      NWS_BASE: stubs.url, OPENMETEO_BASE: stubs.url, COOPS_BASE: stubs.url, IEM_BASE: stubs.url, ANTHROPIC_BASE_URL: stubs.url, ANTHROPIC_API_KEY: "test-key",
       DISCUSSION_HOUR: "0", DISCUSSION_BOOT_DELAY_MS: "50", SITE_URL: "https://example.test", ...env,
     },
   });
@@ -269,6 +313,57 @@ test("a source that's down is named to the model and to readers; the rest still 
   } finally { await app.stop(); await stubs.close(); }
 });
 
+const R2 = { R2_ENDPOINT: "", R2_BUCKET: "kite-archive", R2_ACCESS_KEY_ID: "test-access", R2_SECRET_ACCESS_KEY: "test-secret", ARCHIVE_CHECK_MS: "300", ARCHIVE_BOOT_DELAY_MS: "50" };
+const iso = (s: number) => new Date(s * 1000).toISOString();
+const keyOf = (model: string, s: number) => { const d = iso(s); return `/kite-archive/forecasts/v1/${model}/${d.slice(0, 4)}/${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(11, 13)}z.json.gz`; };
+
+test("the forecast archive saves each new model run to R2, once, signed, with every point", async () => {
+  const stubs = await startStubs();
+  const app = await startServer(stubs, { ...R2, R2_ENDPOINT: stubs.url, ANTHROPIC_API_KEY: "" });
+  try {
+    const keys = () => stubs.puts.map((x) => x.path).sort();
+    // one run each, except NBM: its 01Z run isn't one of the 3-hourly ones we keep
+    const first = [keyOf("ecmwf", RUN0), keyOf("gfs", RUN0), keyOf("hrrr", RUN0 + 5 * HOUR_S), keyOf("rrfs", RUN0)].sort();
+    await expect.poll(keys, { timeout: 15_000 }).toEqual(first);
+    expect(app.logs()).toMatch(/forecast archive to R2 bucket kite-archive/);
+
+    // signed for R2 (SigV4, region "auto"), stored gzipped
+    const hrrr = stubs.puts.find((x) => x.path.includes("/hrrr/"))!;
+    expect(String(hrrr.headers.authorization)).toMatch(/^AWS4-HMAC-SHA256 Credential=test-access\/\d{8}\/auto\/s3\/aws4_request, SignedHeaders=.*, Signature=[0-9a-f]{64}$/);
+    expect(hrrr.headers["content-type"]).toBe("application/gzip");
+    const doc = JSON.parse(zlib.gunzipSync(hrrr.body).toString());
+    expect(doc).toMatchObject({ version: 1, model: "hrrr", openMeteoModel: "gfs_hrrr", run: iso(RUN0 + 5 * HOUR_S) });
+    expect(doc.times[0]).toBe(RUN0 + 5 * HOUR_S); // trimmed to the run's own hours
+    // the points: seed spots, the in-bay stations (not New York) and the airport, then a 9 × 9 grid
+    const ids: string[] = doc.points.map((x: any) => x.id);
+    expect(ids.slice(0, 6)).toEqual(["spot:fort-de-soto", "spot:skyway", "spot:picnic-island", "coops:8726607", "coops:8726724", "asos:KSPG"]);
+    expect(ids.filter((i) => i.startsWith("grid:"))).toHaveLength(81);
+    expect(doc.points[0]).toMatchObject({ lat: 27.64, lon: -82.739, gridLat: expect.closeTo(27.65, 6), gridLon: expect.closeTo(-82.749, 6) }); // where the model's cell is
+    for (const v of ["wind_speed_10m", "wind_gusts_10m", "wind_direction_10m", "temperature_2m", "pressure_msl"]) {
+      expect(doc.values[v]).toHaveLength(ids.length);
+      expect(doc.values[v][0]).toHaveLength(doc.times.length);
+    }
+    // one request per run, one model at a time
+    expect(stubs.archiveAsks.map((q) => q.get("models")).sort()).toEqual(["ecmwf_ifs025", "gfs_global", "gfs_hrrr", "ncep_rrfs_conus"]);
+    expect(stubs.archiveAsks.find((q) => q.get("models") === "gfs_hrrr")!.get("latitude")!.split(",")).toHaveLength(ids.length);
+
+    // checking again with nothing new saves nothing
+    const hits = stubs.metaHits;
+    await expect.poll(() => stubs.metaHits).toBeGreaterThan(hits + 10);
+    expect(keys()).toEqual(first);
+
+    // a new HRRR run and NBM's 03Z run are picked up
+    stubs.runs.ncep_hrrr_conus += HOUR_S;
+    stubs.runs.ncep_nbm_conus += 2 * HOUR_S;
+    await expect.poll(keys).toEqual([...first, keyOf("hrrr", RUN0 + 6 * HOUR_S), keyOf("nbm", RUN0 + 3 * HOUR_S)].sort());
+
+    const status = await (await fetch(`${app.base}/api/archive`)).json();
+    expect(status).toMatchObject({ configured: true, lastError: null });
+    expect(status.models.hrrr).toMatchObject({ run: iso(RUN0 + 6 * HOUR_S), points: ids.length });
+    expect(JSON.stringify(status)).not.toContain("test-secret");
+  } finally { await app.stop(); await stubs.close(); }
+});
+
 test("without an API key nothing is generated and the API says so; bad dates are rejected", async () => {
   const stubs = await startStubs();
   const app = await startServer(stubs, { ANTHROPIC_API_KEY: "" });
@@ -278,6 +373,10 @@ test("without an API key nothing is generated and the API says so; bad dates are
     await new Promise((r) => setTimeout(r, 500));
     expect(stubs.calls).toHaveLength(0);
     expect(app.logs()).toMatch(/discussion disabled/);
+    // no R2 settings: the forecast archive stays off and asks nothing of Open-Meteo
+    expect(await (await fetch(`${app.base}/api/archive`)).json()).toMatchObject({ configured: false });
+    expect(app.logs()).toMatch(/forecast archive off/);
+    expect(stubs.metaHits).toBe(0);
 
     for (const bad of ["../etc/passwd", "2026-9-1", "today"]) {
       expect((await fetch(`${app.base}/api/discussion?date=${encodeURIComponent(bad)}`)).status, bad).toBe(400);

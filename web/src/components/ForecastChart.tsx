@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useMemo, useRef } from "react";
 import { useChartSize } from "./useChartSize";
-import { windStops, rideableWindows, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
+import { handoffs, MODEL_INFO, windStops, rideableWindows, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
 
 export type Range = "24h" | "48h" | "7d";
 export const L = 32, R = 10, T = 14, B = 30;
@@ -16,8 +16,8 @@ export function windowFor(hours: Hour[], range: Range, now = Date.now()) {
 }
 
 /**
- * HRRR/NBM chart: speed area coloured by the wind scale, gust line, the spot's range band,
- * rideable windows (speed AND direction), NBM hatching, "now", scrubbing, and — when we have
+ * Forecast chart: speed area coloured by the wind scale, gust line, the spot's range band,
+ * rideable windows (speed AND direction), model handoffs (NBM hatched), "now", scrubbing, and — when we have
  * them — the station's actual readings drawn over the forecast.
  */
 export function ForecastChart({ forecast, spot, onScrub, range, obs, scrubT, maxH = 560 }: {
@@ -46,10 +46,11 @@ export function ForecastChart({ forecast, spot, onScrub, range, obs, scrubT, max
     const step = range === "24h" ? 4 : 6;
     const labels = hs.filter((h) => (long ? hourOf(h.t) === 0 || hourOf(h.t) === 12 : hourOf(h.t) % step === 0))
       .map((h) => ({ x: x(h.t), text: hourOf(h.t) === 0 ? dayFmt.format(h.t) : long ? "" : hourFmt.format(h.t), day: hourOf(h.t) === 0 }));
-    const nbm = hs.find((h) => h.model === "nbm");
+    const nbm = hs.find((h, i) => i > 0 && h.model === "nbm"); // NBM after a sharper model: hatch it as lower confidence
+    const hand = handoffs(hs).map((d) => ({ ...d, x: x(d.t) }));
     const wins = rideableWindows(hs, spot);
     const obsLine = seen.length > 1 ? seen.map((o, i) => `${i ? "L" : "M"}${x(o.t).toFixed(1)},${y(o.speed).toFixed(1)}`).join("") : null;
-    return { t0, t1, top, x, y, area, speed: line("speed"), gust: line("gust"), ticks, labels, wins, nbmX: nbm ? x(nbm.t) : null, obsLine, seen };
+    return { t0, t1, top, x, y, area, speed: line("speed"), gust: line("gust"), ticks, labels, wins, nbmX: nbm ? x(nbm.t) : null, hand, obsLine, seen };
   }, [hs, obs, spot, range, forecast.timeZone, W, H]);
 
   const now = Date.now();
@@ -127,14 +128,20 @@ export function ForecastChart({ forecast, spot, onScrub, range, obs, scrubT, max
           initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.3, ease: "easeOut", delay: 0.25 }} />
       )}
 
-      {m.nbmX != null && (
-        <g pointerEvents="none">
-          <rect x={m.nbmX} width={W - R - m.nbmX} y={T} height={H - T - B} fill={`url(#${gradId}-hatch)`} />
-          <line x1={m.nbmX} x2={m.nbmX} y1={T} y2={H - B} stroke="rgb(250 204 21 / .45)" strokeDasharray="3 3" />
-          <text x={m.nbmX - 4} y={T + 9} textAnchor="end" fontSize="9" fontWeight="600" fill="rgb(255 255 255 / .45)">HRRR</text>
-          <text x={m.nbmX + 4} y={T + 9} fontSize="9" fontWeight="600" fill="rgb(250 204 21 / .75)">NBM · lower confidence</text>
-        </g>
-      )}
+      {m.nbmX != null && <rect pointerEvents="none" x={m.nbmX} width={W - R - m.nbmX} y={T} height={H - T - B} fill={`url(#${gradId}-hatch)`} />}
+      {m.hand.map((d, k) => {
+        const to = MODEL_INFO[d.to], text = to.label + (d.to === "nbm" ? " · lower confidence" : "");
+        const right = W - R - d.x > text.length * 5.4 + 8; // room for the label after the line, else put it before
+        return (
+          <g key={d.t} pointerEvents="none" data-handoff={to.label}>
+            <line x1={d.x} x2={d.x} y1={T} y2={H - B} stroke={to.color} strokeOpacity=".5" strokeDasharray="3 3" />
+            {k === 0 && right && d.x - L > 34 && (
+              <text x={d.x - 4} y={T + 9} textAnchor="end" fontSize="9" fontWeight="600" fill="rgb(255 255 255 / .45)">{MODEL_INFO[d.from].label}</text>
+            )}
+            <text x={right ? d.x + 4 : d.x - 4} y={T + 9} textAnchor={right ? "start" : "end"} fontSize="9" fontWeight="600" fill={to.color} fillOpacity=".8">{text}</text>
+          </g>
+        );
+      })}
 
       {nowX != null && (
         <g>

@@ -2,10 +2,16 @@ import * as Slider from "@radix-ui/react-slider";
 import { AnimatePresence, motion } from "motion/react";
 import { Pause, Play, RotateCcw, Wind } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
-import { compass, windColor, windStops, type Model } from "../lib/wind";
+import { compass, MODEL_INFO, windColor, windStops, type Model } from "../lib/wind";
 import { useChartSize } from "./useChartSize";
 
 type Area = { mean: number; peak: number; dir: number } | null;
+
+// Tailwind needs literal class names, so each model's chip colours are spelled out.
+const CHIP: Record<Model, string> = {
+  hrrr: "bg-cyan-400/15 text-cyan-200", rrfs: "bg-pink-400/15 text-pink-200", nbm: "bg-amber-400/15 text-amber-200",
+  ecmwf: "bg-violet-400/15 text-violet-200", gfs: "bg-orange-400/15 text-orange-200",
+};
 
 // Radix keeps the 20px thumb inside the track, so its centre runs from 10px to width−10px.
 // The chart uses the same inset so a point on the chart sits exactly above the thumb for that hour.
@@ -74,8 +80,8 @@ export function Timeline({ hours, models, area, threshold, index, onIndex, playi
             </button>
           ) : <span className="text-[12px] text-white/40">Loading the week…</span>}
           <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${index === 0 ? "bg-emerald-400/15 text-emerald-300"
-            : models[index] === "nbm" ? "bg-amber-400/15 text-amber-200" : "bg-cyan-400/15 text-cyan-200"}`}>
-            {index === 0 ? "LIVE" : models[index] === "nbm" ? "NBM" : "HRRR"}
+            : CHIP[models[index]] ?? CHIP.hrrr}`}>
+            {index === 0 ? "LIVE" : MODEL_INFO[models[index]]?.label}
           </span>
         </div>
 

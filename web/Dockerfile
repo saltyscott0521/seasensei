@@ -1,4 +1,5 @@
-# Build the Vite app, then run the small Node server that serves it, the daily wind discussion API and its scheduler.
+# Build the Vite app, then run the small Node server that serves it, the daily wind discussion API and its scheduler,
+# and the forecast-run archive (to Cloudflare R2 when R2_* is set).
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./

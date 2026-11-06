@@ -3,7 +3,7 @@ import { ChevronRight, Radio } from "lucide-react";
 import { useSpots } from "../lib/data";
 import { fmtWindow, useSpotNow } from "../lib/useSpotNow";
 import { compass, type Spot } from "../lib/wind";
-import { Knots, RideBadge, Skeleton, Sparkline, WindArrow } from "./bits";
+import { Knots, ModelPicker, RideBadge, Skeleton, Sparkline, WindArrow } from "./bits";
 import { DiscussionCard } from "./Discussion";
 
 export function SpotList({ onSelect, onOpenDiscussion }: { onSelect: (s: Spot) => void; onOpenDiscussion: (date: string) => void }) {
@@ -11,9 +11,9 @@ export function SpotList({ onSelect, onOpenDiscussion }: { onSelect: (s: Spot) =
   return (
     <div className="flex flex-col gap-2.5">
       <DiscussionCard onOpen={onOpenDiscussion} />
-      <div className="flex items-baseline justify-between px-1">
+      <div className="flex items-center justify-between px-1">
         <h2 className="text-sm font-semibold tracking-wide text-white/80">Your spots</h2>
-        <span className="text-xs text-white/40">HRRR 48 h · NBM to 7 days</span>
+        <ModelPicker />
       </div>
       {spots.length === 0 && (
         <p className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-white/50">

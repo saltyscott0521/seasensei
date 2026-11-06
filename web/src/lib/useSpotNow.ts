@@ -18,7 +18,7 @@ export function useSpotNow(spot: Spot | undefined) {
   const fresh = station && Date.now() - station.t < 90 * 60_000 ? station : null;
   const now = fresh
     ? { speed: fresh.speed, gust: fresh.gust ?? fresh.speed, dir: fresh.dir, t: fresh.t, source: "live" as const, stationName: fresh.name, km: fresh.km }
-    : model ? { ...model, source: "hrrr" as const, stationName: undefined, km: null } : null;
+    : model ? { ...model, source: "model" as const, stationName: undefined, km: null } : null;
   const windows = spot ? rideableWindows(hours.filter((h) => h.t >= Date.now() - 3600e3), spot) : [];
   return {
     fc, ob, model, now,

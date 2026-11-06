@@ -8,9 +8,9 @@ import { DiscussionDialog } from "./components/Discussion";
 import { SpotDetail } from "./components/SpotDetail";
 import { SpotList } from "./components/SpotList";
 import { WindMap } from "./components/WindMap";
-import { useSpots, useWindField } from "./lib/data";
+import { usePrimaryModel, useSpots, useWindField } from "./lib/data";
 import { Timeline } from "./components/Timeline";
-import { areaStats, windGradient, fieldAt, type Bounds, type Spot } from "./lib/wind";
+import { areaStats, windGradient, fieldAt, MODEL_INFO, type Bounds, type Model, type Spot } from "./lib/wind";
 
 type View = { kind: "list" } | { kind: "spot"; id: string } | { kind: "add" };
 
@@ -60,13 +60,14 @@ export default function App() {
     if (url.href !== location.href) history.replaceState(null, "", url);
   }, [discussion]);
   const field = useWindField(bounds);
+  const primary = usePrimaryModel();
   const [showStations, setShowStations] = useState(true);
   const [tIndex, setTIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   // Hours from the current one forward; index 0 = now.
   const timeline = useMemo(() => {
     const f = field.data;
-    if (!f) return { hours: [] as number[], models: [] as ("hrrr" | "nbm")[], area: [] as ReturnType<typeof areaStats>[] };
+    if (!f) return { hours: [] as number[], models: [] as Model[], area: [] as ReturnType<typeof areaStats>[] };
     const start = Math.floor(Date.now() / 3600e3) * 3600e3;
     const idx = f.times.map((t, i) => [t, i] as const).filter(([t]) => t >= start);
     return { hours: idx.map(([t]) => t), models: idx.map(([, i]) => f.models[i]), area: idx.map(([, i]) => areaStats(f, i)) };
@@ -140,7 +141,7 @@ export default function App() {
             <div className="text-[15px] font-semibold tracking-tight">SeaSensei</div>
             <div className="flex items-center gap-1.5 text-[11px] text-white/50">
               <span className="relative flex h-1.5 w-1.5"><span className="ping-soft absolute inset-0 rounded-full bg-emerald-400" /><span className="relative h-1.5 w-1.5 rounded-full bg-emerald-400" /></span>
-              {field.data ? (at ? `Forecast · ${new Intl.DateTimeFormat([], { weekday: "short", hour: "numeric" }).format(at)}` : "Live wind · HRRR field")
+              {field.data ? (at ? `Forecast · ${new Intl.DateTimeFormat([], { weekday: "short", hour: "numeric" }).format(at)}` : `Live wind · ${MODEL_INFO[primary].label} field`)
                 : field.isError ? "Wind field unavailable" : "Loading wind field…"}
             </div>
           </div>

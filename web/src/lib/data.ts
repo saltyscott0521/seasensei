@@ -2,8 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import type { DiscussionIndex, DiscussionResponse } from "./discussion";
 import { useSyncExternalStore } from "react";
 import {
-  forecastUrl, gridPoints, IEM_URL, modelsUrl, parseField, parseModels, parseObsSeries, stationHistoryUrl, inBox, parseForecast, parseIem, parseObservation, parseStations, spotsBox,
-  stationUrl, STATIONS_URL, TAMPA_BAY, type Bounds, type LiveReading, type Spot,
+  chainFor, forecastUrl, gridPoints, IEM_URL, MODEL_INFO, modelsUrl, parseField, parseModels, parseObsSeries, PRIMARY_MODELS, stationHistoryUrl, inBox, parseForecast, parseIem,
+  parseObservation, parseStations, spotsBox, stationUrl, STATIONS_URL, TAMPA_BAY, type Bounds, type LiveReading, type Model, type Spot,
 } from "./wind";
 
 async function json(url: string) {
@@ -14,14 +14,37 @@ async function json(url: string) {
 
 const MIN = 60_000;
 
-export const useForecast = (spot: Spot | undefined) =>
-  useQuery({
-    queryKey: ["forecast", spot?.lat, spot?.lon],
-    queryFn: () => json(forecastUrl(spot!.lat, spot!.lon)).then(parseForecast),
+/* ---------- Primary model: which forecast leads everywhere (kept in localStorage) ---------- */
+
+const MODEL_KEY = "primaryModel";
+let primary: Model = (() => {
+  try {
+    const m = localStorage.getItem(MODEL_KEY);
+    if (m && (PRIMARY_MODELS as string[]).includes(m)) return m as Model;
+  } catch { /* storage unavailable */ }
+  return "hrrr";
+})();
+const modelListeners = new Set<() => void>();
+
+export function setPrimaryModel(m: Model) {
+  primary = m;
+  try { localStorage.setItem(MODEL_KEY, m); } catch { /* storage unavailable */ }
+  modelListeners.forEach((l) => l());
+}
+export const usePrimaryModel = () =>
+  useSyncExternalStore((l) => (modelListeners.add(l), () => modelListeners.delete(l)), () => primary);
+
+export const useForecast = (spot: Spot | undefined) => {
+  const model = usePrimaryModel();
+  return useQuery({
+    queryKey: ["forecast", model, spot?.lat, spot?.lon],
+    queryFn: () => json(forecastUrl(spot!.lat, spot!.lon, model)).then((j) => parseForecast(j, model)),
     enabled: !!spot,
     staleTime: 15 * MIN,
     refetchInterval: 30 * MIN,
+    placeholderData: (prev) => prev,
   });
+};
 
 export const useObservation = (station: string | undefined) =>
   useQuery({
@@ -37,14 +60,15 @@ export const useStations = () =>
   useQuery({ queryKey: ["stations"], queryFn: () => json(STATIONS_URL).then(parseStations), staleTime: Infinity, gcTime: Infinity });
 
 /**
- * A week of hourly wind for a grid over the map view, in ONE request (HRRR to 48 h, then NBM).
+ * A week of hourly wind for a grid over the map view, in ONE request (the primary model's chain, e.g. HRRR → RRFS → NBM).
  * Scrubbing time is then local and instant. (Fetching hour by hour would cost ~50 Open-Meteo
  * "calls" per step — a single play-through would blow the free daily quota.)
  */
 export const useWindField = (bounds: Bounds | null) => {
+  const model = usePrimaryModel();
   const g = bounds ? gridPoints(bounds, 5) : null;
   return useQuery({
-    queryKey: ["field", g?.lats[0], g?.lons[0], g?.lats.length, g && g.lats[1] - g.lats[0]],
+    queryKey: ["field", model, g?.lats[0], g?.lons[0], g?.lats.length, g && g.lats[1] - g.lats[0]],
     enabled: !!g,
     staleTime: 20 * MIN,
     refetchInterval: 30 * MIN,
@@ -55,10 +79,10 @@ export const useWindField = (bounds: Bounds | null) => {
       lats.forEach((lat) => lons.forEach((lon) => { la.push(lat); lo.push(lon); }));
       const q = new URLSearchParams({
         latitude: la.join(","), longitude: lo.join(","), hourly: "wind_speed_10m,wind_direction_10m",
-        models: "gfs_hrrr,ncep_nbm_conus", wind_speed_unit: "kn", timeformat: "unixtime", forecast_days: "7",
+        models: chainFor(model).map((m) => MODEL_INFO[m].key).join(","), wind_speed_unit: "kn", timeformat: "unixtime", forecast_days: "7",
       });
       const res = await json(`https://api.open-meteo.com/v1/forecast?${q}`);
-      return parseField(Array.isArray(res) ? res : [res], lats, lons);
+      return parseField(Array.isArray(res) ? res : [res], lats, lons, model);
     },
   });
 };

@@ -27,7 +27,34 @@ export function arcLabel(arc?: Arc) {
   return `${compass(arc.dirC)} ±${Math.round(arc.dirW / 2)}° (${compass(arc.dirC - arc.dirW / 2)}–${compass(arc.dirC + arc.dirW / 2)})`;
 }
 
-export type Model = "hrrr" | "nbm";
+export type Model = "hrrr" | "rrfs" | "nbm" | "ecmwf" | "gfs";
+
+/** Every model we show, keyed by our id; `key` is Open-Meteo's model name. */
+export const MODEL_INFO: Record<Model, { key: string; label: string; color: string; note: string }> = {
+  hrrr: { key: "gfs_hrrr", label: "HRRR", color: "#22d3ee", note: "3 km, to 48 h" },
+  rrfs: { key: "ncep_rrfs_conus", label: "RRFS", color: "#f472b6", note: "3 km, NOAA's new model, to 84 h" },
+  nbm: { key: "ncep_nbm_conus", label: "NBM", color: "#facc15", note: "NOAA blend, to 7 d" },
+  ecmwf: { key: "ecmwf_ifs025", label: "ECMWF", color: "#a78bfa", note: "European, 25 km, to 7 d" },
+  gfs: { key: "gfs_global", label: "GFS", color: "#fb923c", note: "US global, to 7 d" },
+};
+export const PRIMARY_MODELS: Model[] = ["hrrr", "rrfs", "nbm", "ecmwf", "gfs"];
+
+/**
+ * The models a forecast is drawn from, best first; each hour comes from the first one that has it.
+ * HRRR runs out at 48 h, RRFS carries on to 84 h, then NOAA's blend to 7 days. The global models cover the week alone.
+ */
+export function chainFor(primary: Model): Model[] {
+  if (primary === "hrrr") return ["hrrr", "rrfs", "nbm"];
+  if (primary === "rrfs") return ["rrfs", "nbm"];
+  return [primary];
+}
+/** Where a forecast switches from one model to the next (HRRR → RRFS at ~48 h, RRFS → NBM at ~84 h). */
+export function handoffs(hours: Hour[]) {
+  return hours.flatMap((h, i) => (i > 0 && h.model !== hours[i - 1].model ? [{ t: h.t, from: hours[i - 1].model, to: h.model }] : []));
+}
+
+/** "HRRR → RRFS → NBM" */
+export const chainLabel = (primary: Model) => chainFor(primary).map((m) => MODEL_INFO[m].label).join(" → ");
 export type Hour = { t: number; speed: number; gust: number; dir: number; model: Model }; // t = ms epoch, knots, deg FROM
 export type Forecast = { timeZone: string; hours: Hour[] };
 export type Observation = { name: string; t: number; speed: number; gust: number; dir: number };
@@ -85,12 +112,11 @@ export const TAMPA_BAY: Omit<Spot, "id">[] = [
   { name: "Picnic Island", lat: 27.853, lon: -82.552, min: 15, max: 30, station: "8726607" },
 ];
 
-export function forecastUrl(lat: number, lon: number) {
+export function forecastUrl(lat: number, lon: number, primary: Model = "hrrr") {
   const q = new URLSearchParams({
     latitude: String(lat), longitude: String(lon),
     hourly: "wind_speed_10m,wind_gusts_10m,wind_direction_10m",
-    // HRRR (3 km, hourly updates) runs out at 48 h; NOAA's National Blend (NBM) carries it to 7 days.
-    models: "gfs_hrrr,ncep_nbm_conus", wind_speed_unit: "kn", timeformat: "unixtime",
+    models: chainFor(primary).map((m) => MODEL_INFO[m].key).join(","), wind_speed_unit: "kn", timeformat: "unixtime",
     timezone: "auto", forecast_days: "7", past_days: "1",
   });
   return `https://api.open-meteo.com/v1/forecast?${q}`;
@@ -107,15 +133,15 @@ export function stationUrl(station: string) {
 export const STATIONS_URL = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=met";
 
 /**
- * Open-Meteo response → hours. Each hour comes from HRRR when HRRR has it, else from NBM
+ * Open-Meteo response → hours. Each hour comes from the first model in the chain that has it
  * (multi-model responses suffix keys with the model name; a single-model response doesn't).
  */
-export function parseForecast(json: any): Forecast {
+export function parseForecast(json: any, primary: Model = "hrrr"): Forecast {
   const h = json.hourly, hours: Hour[] = [];
-  const col = (k: string, m: string) => h[`${k}_${m}`] ?? (m === "gfs_hrrr" ? h[k] : undefined) ?? [];
-  const src = [["gfs_hrrr", "hrrr"], ["ncep_nbm_conus", "nbm"]] as const;
+  const col = (k: string, m: string) => h[`${k}_${m}`] ?? h[k] ?? [];
   for (let i = 0; i < h.time.length; i++) {
-    for (const [m, model] of src) {
+    for (const model of chainFor(primary)) {
+      const m = MODEL_INFO[model].key;
       const s = col("wind_speed_10m", m)[i], g = col("wind_gusts_10m", m)[i], d = col("wind_direction_10m", m)[i];
       if (s == null || g == null || d == null) continue;
       hours.push({ t: h.time[i] * 1000, speed: s, gust: g, dir: d, model });
@@ -273,16 +299,18 @@ export function windStops(top: number) {
 
 /* ---------- A week of wind fields for the map's time scrubber ---------- */
 
-/** Per grid point, hourly speed/dir for the whole forecast (HRRR where it has data, else NBM). */
+/** Per grid point, hourly speed/dir for the whole forecast (from the first model in the chain with data). */
 export type WindField = { lats: number[]; lons: number[]; times: number[]; models: Model[]; speed: (number | null)[][]; dir: (number | null)[][] };
 
-export function parseField(arr: any[], lats: number[], lons: number[]): WindField {
+export function parseField(arr: any[], lats: number[], lons: number[], primary: Model = "hrrr"): WindField {
   const h0 = arr[0].hourly;
   const times: number[] = h0.time.map((t: number) => t * 1000);
-  const pick = (h: any, k: string, i: number) => h[`${k}_gfs_hrrr`]?.[i] ?? h[`${k}_ncep_nbm_conus`]?.[i] ?? h[k]?.[i] ?? null;
+  const chain = chainFor(primary);
+  const col = (h: any, k: string, m: Model) => h[`${k}_${MODEL_INFO[m].key}`] ?? h[k];
+  const pick = (h: any, k: string, i: number) => chain.map((m) => col(h, k, m)?.[i]).find((v) => v != null) ?? null;
   return {
     lats, lons, times,
-    models: times.map((_, i) => (h0.wind_speed_10m_gfs_hrrr?.[i] != null ? "hrrr" : "nbm")),
+    models: times.map((_, i) => chain.find((m) => col(h0, "wind_speed_10m", m)?.[i] != null) ?? chain[chain.length - 1]),
     speed: arr.map((r) => times.map((_, i) => pick(r.hourly, "wind_speed_10m", i))),
     dir: arr.map((r) => times.map((_, i) => pick(r.hourly, "wind_direction_10m", i))),
   };
@@ -346,13 +374,7 @@ export function scoreForecast(hours: Hour[], obs: Obs[]): Score | null {
 
 /* ---------- Model comparison ---------- */
 
-export const MODELS = [
-  { key: "gfs_hrrr", label: "HRRR", color: "#22d3ee", note: "3 km, to 48 h" },
-  { key: "ncep_rrfs_conus", label: "RRFS", color: "#f472b6", note: "3 km, NOAA's new model, to 84 h" },
-  { key: "ncep_nbm_conus", label: "NBM", color: "#facc15", note: "NOAA blend, to 7 d" },
-  { key: "ecmwf_ifs025", label: "ECMWF", color: "#a78bfa", note: "European, to 7 d" },
-  { key: "gfs_global", label: "GFS", color: "#fb923c", note: "US global, to 7 d" },
-] as const;
+export const MODELS = PRIMARY_MODELS.map((id) => ({ id, ...MODEL_INFO[id] }));
 
 export type ModelCompare = { times: number[]; series: Record<string, (number | null)[]> };
 

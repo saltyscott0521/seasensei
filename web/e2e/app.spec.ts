@@ -28,13 +28,16 @@ test("opens on the map with the three Tampa Bay spots, live stations and a wind 
   await expect(page.locator(".maplibregl-marker")).toHaveCount(3);
 });
 
-test("a spot's detail: live vs model, 7 days with NBM, forecast vs actual, model comparison", async ({ page }) => {
+test("a spot's detail: live vs model, 7 days through RRFS to NBM, forecast vs actual, model comparison", async ({ page }) => {
   await openSpot(page, "Picnic Island");
   await expect(page.getByText(/Live · Old Port Tampa/)).toBeVisible();
   await expect(page.getByText("HRRR said for this hour")).toBeVisible();
 
   await page.getByRole("button", { name: "7 days" }).click();
   await expect(page.getByText("NBM · lower confidence")).toBeVisible();
+  // HRRR hands over to RRFS at 48 h, then RRFS to NBM at 84 h
+  await expect(page.locator('svg[aria-label="7 day wind forecast"] [data-handoff]')).toHaveCount(2);
+  await expect(page.locator('svg[aria-label="7 day wind forecast"] [data-handoff="RRFS"]')).toBeVisible();
 
   // charts are big, and the bars are colour coded (different speeds → different fills; status strip shows the spot's verdict)
   const line = page.locator('svg[aria-label="7 day wind forecast"]');
@@ -79,7 +82,7 @@ test("a spot's detail: live vs model, 7 days with NBM, forecast vs actual, model
 
 test("wind direction: a spot only counts hours from a workable direction", async ({ page }) => {
   await openSpot(page, "Fort De Soto");
-  const chips = page.locator("span[title^='HRRR'], span[title^='NBM']");
+  const chips = page.locator("span[title^='HRRR'], span[title^='RRFS'], span[title^='NBM']");
   await expect(chips.first()).toBeVisible(); // mock wind is SW and reaches 24 kn, so there are windows
 
   await page.getByRole("button", { name: "Spot settings" }).click();
@@ -172,6 +175,40 @@ test("the timeline scrubs the week: header, markers and station layer follow the
   await page.getByRole("button", { name: "Back to now" }).click();
   await expect(page.getByText("Live wind · HRRR field")).toBeVisible();
   await expect(page.getByLabel(/Old Port Tampa: \d+ knots/)).toBeVisible();
+});
+
+test("switching the primary model changes the map, timeline and spot forecasts, and is remembered", async ({ page }) => {
+  const asked: string[] = [];
+  page.on("request", (r) => { if (r.url().startsWith("https://api.open-meteo.com/")) asked.push(new URL(r.url()).searchParams.get("models") ?? ""); });
+  const picker = page.getByRole("combobox", { name: "Forecast model" });
+  await expect(picker).toHaveValue("hrrr");
+  await expect(picker.locator("option:checked")).toHaveText("HRRR → RRFS → NBM");
+
+  // RRFS first: the map field and the spots ask for RRFS then NBM, and the header says so
+  asked.length = 0;
+  await picker.selectOption("rrfs");
+  await expect(page.getByText("Live wind · RRFS field")).toBeVisible();
+  await expect.poll(() => asked.filter((m) => m === "ncep_rrfs_conus,ncep_nbm_conus").length).toBeGreaterThan(1);
+  await page.getByRole("slider", { name: "Forecast time" }).focus();
+  for (let i = 0; i < 30; i++) await page.keyboard.press("ArrowRight");
+  await expect(page.getByText("RRFS", { exact: true })).toBeVisible(); // the timeline's model chip
+  await page.getByRole("button", { name: "Back to now" }).click();
+
+  await openSpot(page, "Fort De Soto");
+  await page.getByRole("button", { name: "7 days" }).click();
+  const chart = page.locator('svg[aria-label="7 day wind forecast"]');
+  await expect(chart.locator("[data-handoff]")).toHaveCount(1);
+  await expect(chart.locator('[data-handoff="NBM"]')).toBeVisible();
+
+  // ECMWF covers the week on its own: no handoffs, nothing hatched as lower confidence
+  await page.getByRole("combobox", { name: "Forecast model" }).selectOption("ecmwf");
+  await expect(page.getByText("Live wind · ECMWF field")).toBeVisible();
+  await expect(chart.locator("[data-handoff]")).toHaveCount(0);
+  await expect(page.getByText("NBM · lower confidence")).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByText("Live wind · ECMWF field")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Forecast model" })).toHaveValue("ecmwf");
 });
 
 test("the wind discussion: card summary, full dialog with drivers, days, sources, and the archive", async ({ page }) => {
