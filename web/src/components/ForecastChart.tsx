@@ -1,11 +1,14 @@
-import { motion } from "motion/react";
-import { useMemo, useRef } from "react";
+import { memo, useCallback, useMemo } from "react";
+import { handoffs, compass, windStops, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
+import { useAt, useNow } from "../lib/time";
+import { DayNight, DrawIn, Handoffs, HatchDef, NowLine, Pill, RangeLines, Sessions, SpeedGrid, TimeAxis, type Box } from "./charts/parts";
+import { forecastSummary, fmtWhen, HOUR, nearestIndex, nightSpans, sessionSpans, speedTicks, speedTop, timeAxis, useSvgId } from "./charts/scale";
+import { useScrub } from "./charts/useScrub";
 import { useChartSize } from "./useChartSize";
-import { handoffs, MODEL_INFO, windStops, rideableWindows, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
 
 export type Range = "24h" | "48h" | "7d";
-export const L = 32, R = 10, T = 14, B = 30;
-const HOUR = 3600e3;
+/** Plot margins shared by the line and bar charts, so their time axes line up exactly. */
+export const L = 30, R = 10, T = 24, B = 24;
 
 /** The forecast hours to draw for a range, and whether they're mostly in the past. */
 export function windowFor(hours: Hour[], range: Range, now = Date.now()) {
@@ -15,156 +18,121 @@ export function windowFor(hours: Hour[], range: Range, now = Date.now()) {
   return r.length > 1 ? r : hours;
 }
 
+const LABEL: Record<Range, string> = { "24h": "Past 24 hours, forecast versus actual", "48h": "48 hour wind forecast", "7d": "7 day wind forecast" };
+
 /**
- * Forecast chart: speed area coloured by the wind scale, gust line, the spot's range band,
- * rideable windows (speed AND direction), model handoffs (NBM hatched), "now", scrubbing, and — when we have
- * them — the station's actual readings drawn over the forecast.
+ * The line chart: sustained wind as an area on the wind scale, gusts as a thin dashed line, the rider's daylight
+ * sessions (the same runs as the session chips) as a go band, night shaded, model handoffs (NBM hatched), now in
+ * accent, the station's readings in white when we have them, and a scrub cursor with a readout. `scrubT` is the
+ * shared cursor: another chart's scrub, else the timeline's hour (shown only when it falls inside this range).
  */
-export function ForecastChart({ forecast, spot, onScrub, range, obs, scrubT, maxH = 560 }: {
-  forecast: Forecast; spot: Spot; onScrub: (h: Hour | null) => void; range: Range; obs?: Obs[]; scrubT?: number | null; maxH?: number;
+export const ForecastChart = memo(function ForecastChart({ forecast, spot, onScrub, range, obs, scrubT, maxH = 560, minH = 250 }: {
+  forecast: Forecast; spot: Spot; onScrub: (h: Hour | null) => void; range: Range; obs?: Obs[]; scrubT?: number | null; maxH?: number; minH?: number;
 }) {
-  const hs = useMemo(() => windowFor(forecast.hours, range), [forecast.hours, range]);
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [wrapRef, { w: W, h: H }] = useChartSize(250, 0.62, maxH);
-  // The cursor is owned by the parent so the bar chart below can share it.
-  const cursor = scrubT != null ? hs.reduce((b, h, i) => (Math.abs(h.t - scrubT) < Math.abs(hs[b].t - scrubT) ? i : b), 0) : null;
+  const now = useNow();
+  const at = useAt();
+  const shared = scrubT ?? at; // the parent's cursor, else the timeline's hour
+  const tz = forecast.timeZone;
+  const hs = useMemo(() => windowFor(forecast.hours, range, now), [forecast.hours, range, now]);
+  const [wrapRef, { w: W, h: H }] = useChartSize(minH, 0.62, maxH);
+  const box: Box = useMemo(() => ({ l: L, r: W - R, t: T, b: H - B }), [W, H]);
+  const ids = { grad: useSvgId("spd"), fade: useSvgId("fade"), mask: useSvgId("mask"), hatch: useSvgId("hatch"), clip: useSvgId("draw"), desc: useSvgId("desc") };
 
   const m = useMemo(() => {
     const t0 = hs[0].t, t1 = hs[hs.length - 1].t;
     const seen = (obs ?? []).filter((o) => o.t >= t0 && o.t <= t1);
-    const top = Math.ceil(Math.max(spot.max + 5, ...hs.map((h) => h.gust), ...seen.map((o) => o.speed)) / 5) * 5;
+    const top = speedTop(spot.max, [...hs.map((h) => h.gust), ...seen.map((o) => o.speed)]);
     const x = (t: number) => L + ((t - t0) / (t1 - t0 || 1)) * (W - L - R);
     const y = (v: number) => T + (1 - v / top) * (H - T - B);
-    const line = (k: "speed" | "gust") => hs.map((h, i) => `${i ? "L" : "M"}${x(h.t).toFixed(1)},${y(h[k]).toFixed(1)}`).join("");
-    const area = `${line("speed")}L${x(t1)},${y(0)}L${x(t0)},${y(0)}Z`;
-    const ticks = [0, 10, 20, 30, 40, 50].filter((v) => v <= top);
-    const tzOpt = { timeZone: forecast.timeZone };
-    const hourFmt = new Intl.DateTimeFormat([], { ...tzOpt, hour: "numeric" });
-    const dayFmt = new Intl.DateTimeFormat([], { ...tzOpt, weekday: "short" });
-    const hourOf = (t: number) => Number(new Intl.DateTimeFormat("en-US", { ...tzOpt, hour: "numeric", hourCycle: "h23" }).format(t));
-    const long = t1 - t0 > 80 * HOUR;
-    const step = range === "24h" ? 4 : 6;
-    const labels = hs.filter((h) => (long ? hourOf(h.t) === 0 || hourOf(h.t) === 12 : hourOf(h.t) % step === 0))
-      .map((h) => ({ x: x(h.t), text: hourOf(h.t) === 0 ? dayFmt.format(h.t) : long ? "" : hourFmt.format(h.t), day: hourOf(h.t) === 0 }));
+    const pts = (k: "speed" | "gust") => hs.map((h, i) => `${i ? "L" : "M"}${x(h.t).toFixed(1)},${y(h[k]).toFixed(1)}`).join("");
+    const speed = pts("speed");
     const nbm = hs.find((h, i) => i > 0 && h.model === "nbm"); // NBM after a sharper model: hatch it as lower confidence
-    const hand = handoffs(hs).map((d) => ({ ...d, x: x(d.t) }));
-    const wins = rideableWindows(hs, spot);
-    const obsLine = seen.length > 1 ? seen.map((o, i) => `${i ? "L" : "M"}${x(o.t).toFixed(1)},${y(o.speed).toFixed(1)}`).join("") : null;
-    return { t0, t1, top, x, y, area, speed: line("speed"), gust: line("gust"), ticks, labels, wins, nbmX: nbm ? x(nbm.t) : null, hand, obsLine, seen };
-  }, [hs, obs, spot, range, forecast.timeZone, W, H]);
+    return {
+      t0, t1, top, x, y, seen, speed,
+      area: `${speed}L${x(t1).toFixed(1)},${y(0)}L${x(t0).toFixed(1)},${y(0)}Z`,
+      gust: pts("gust"),
+      ticks: speedTicks(top),
+      axis: timeAxis(t0, t1, tz, x, W - L - R),
+      nights: nightSpans(spot.lat, spot.lon, t0, t1),
+      sessions: sessionSpans(forecast.hours, spot, t0, t1),
+      nbmX: nbm ? x(nbm.t) : null,
+      hand: handoffs(hs).map((d) => ({ ...d, x: x(d.t) })),
+      obsLine: seen.length > 1 ? seen.map((o, i) => `${i ? "L" : "M"}${x(o.t).toFixed(1)},${y(o.speed).toFixed(1)}`).join("") : null,
+    };
+  }, [hs, obs, spot, forecast.hours, tz, W, H]);
 
-  const now = Date.now();
+  const times = useMemo(() => hs.map((h) => h.t), [hs]);
+  const tAtX = useCallback((px: number) => m.t0 + ((px - L) / (W - L - R)) * (m.t1 - m.t0), [m, W]);
+  const emit = useCallback((i: number | null) => onScrub(i == null ? null : hs[i]), [onScrub, hs]);
+  const scrub = useScrub(times, tAtX, emit, shared ?? now);
+
+  const summary = useMemo(() => {
+    const base = forecastSummary(hs, forecast.hours, spot, tz, now);
+    const keys = " The left and right arrow keys read each hour, with Shift six at a time; Escape clears.";
+    if (range !== "24h" || m.seen.length < 2) return base + keys;
+    const meas = m.seen.reduce((a, o) => (o.speed > a.speed ? o : a));
+    return `${base} The station measured up to ${Math.round(meas.speed)} knots, drawn in white.${keys}`;
+  }, [hs, forecast.hours, spot, tz, now, range, m.seen]);
+
+  if (!W) return <div ref={wrapRef} style={{ height: H }} />;
+
   const nowX = now >= m.t0 && now <= m.t1 ? m.x(now) : null;
-
-  function onMove(e: React.PointerEvent) {
-    const r = svgRef.current!.getBoundingClientRect();
-    const px = ((e.clientX - r.left) / r.width) * W;
-    const t = m.t0 + ((px - L) / (W - L - R)) * (m.t1 - m.t0);
-    let best = 0;
-    hs.forEach((h, i) => { if (Math.abs(h.t - t) < Math.abs(hs[best].t - t)) best = i; });
-    onScrub(hs[best]);
-  }
-  function onLeave() { onScrub(null); }
-
-  const gradId = `spd-${spot.id}`;
-  const c = cursor != null ? hs[cursor] : null;
+  const ct = scrub.t ?? (shared != null && shared >= m.t0 - HOUR / 2 && shared <= m.t1 + HOUR / 2 ? shared : null);
+  const c = ct != null ? hs[nearestIndex(hs, ct, (h) => h.t)] : null;
   const cObs = c ? m.seen.reduce<Obs | null>((b, o) => (Math.abs(o.t - c.t) < 45 * 60e3 && (!b || Math.abs(o.t - c.t) < Math.abs(b.t - c.t)) ? o : b), null) : null;
 
   return (
-    <div ref={wrapRef}>
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block touch-pan-y select-none" role="img"
-      aria-label={range === "24h" ? "Past 24 hours, forecast versus actual" : range === "48h" ? "48 hour wind forecast" : "7 day wind forecast"}
-      onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={onLeave} onPointerUp={(e) => e.pointerType !== "mouse" && onLeave()}>
-      <defs>
-        <linearGradient id={gradId} x1="0" y1={m.y(0)} x2="0" y2={m.y(m.top)} gradientUnits="userSpaceOnUse">
-          {windStops(m.top).map((st, i) => <stop key={i} offset={st.offset} stopColor={st.color} />)}
-        </linearGradient>
-        <linearGradient id={`${gradId}-fade`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="white" stopOpacity=".55" />
-          <stop offset="1" stopColor="white" stopOpacity=".04" />
-        </linearGradient>
-        <mask id={`${gradId}-m`}><rect width={W} height={H} fill={`url(#${gradId}-fade)`} /></mask>
-        <pattern id={`${gradId}-hatch`} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2="6" stroke="rgb(255 255 255 / .05)" strokeWidth="3" />
-        </pattern>
-      </defs>
+    <div ref={wrapRef} className="relative">
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="img" aria-label={LABEL[range]} aria-describedby={ids.desc}
+        aria-roledescription="chart" tabIndex={0}
+        className="block cursor-crosshair touch-pan-y select-none rounded-sm"
+        onMouseDown={(e) => e.preventDefault()} {...scrub.handlers} {...scrub.keys}>
+        <defs>
+          <linearGradient id={ids.grad} x1="0" y1={m.y(0)} x2="0" y2={m.y(m.top)} gradientUnits="userSpaceOnUse">
+            {windStops(m.top).map((st, i) => <stop key={i} offset={st.offset} stopColor={st.color} />)}
+          </linearGradient>
+          <linearGradient id={ids.fade} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="white" stopOpacity=".5" />
+            <stop offset="1" stopColor="white" stopOpacity=".03" />
+          </linearGradient>
+          <mask id={ids.mask}><rect width={W} height={H} fill={`url(#${ids.fade})`} /></mask>
+          <HatchDef id={ids.hatch} />
+        </defs>
 
-      {m.ticks.map((v) => (
-        <g key={v}>
-          <line x1={L} x2={W - R} y1={m.y(v)} y2={m.y(v)} stroke="rgb(255 255 255 / .06)" />
-          <text x={L - 6} y={m.y(v) + 3.5} textAnchor="end" fontSize="11" fill="rgb(255 255 255 / .4)" className="num">{v}</text>
-        </g>
-      ))}
+        <DayNight nights={m.nights} x={m.x} box={box} />
+        <Sessions spans={m.sessions} x={m.x} box={box} base={m.y(0)} />
+        <SpeedGrid ticks={m.ticks} y={m.y} box={box} />
+        <RangeLines y={m.y} min={spot.min} max={spot.max} box={box} />
+        <TimeAxis rules={m.axis.rules} labels={m.axis.labels} box={box} labelY={H - 7} W={W} />
 
-      {/* the spot's speed range */}
-      <rect x={L} width={W - L - R} y={m.y(spot.max)} height={m.y(spot.min) - m.y(spot.max)} fill="rgb(52 211 153 / .06)" />
-      <line x1={L} x2={W - R} y1={m.y(spot.min)} y2={m.y(spot.min)} stroke="rgb(52 211 153 / .35)" strokeDasharray="3 4" />
-      <line x1={L} x2={W - R} y1={m.y(spot.max)} y2={m.y(spot.max)} stroke="rgb(52 211 153 / .35)" strokeDasharray="3 4" />
+        <DrawIn id={ids.clip} drawKey={`line:${spot.id}`} W={W} H={H}>
+          <path d={m.area} fill={`url(#${ids.grad})`} mask={`url(#${ids.mask})`} />
+          <path d={m.gust} fill="none" strokeWidth="1.25" strokeDasharray="3 3" strokeLinecap="round" className="stroke-fg-2" />
+          <path d={m.speed} fill="none" stroke={`url(#${ids.grad})`} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+          {/* what the station actually measured, over an ink halo so it reads on any colour */}
+          {m.obsLine && <path d={m.obsLine} fill="none" strokeWidth="4.5" strokeLinejoin="round" strokeLinecap="round" className="stroke-ink/80" />}
+          {m.obsLine && <path d={m.obsLine} fill="none" stroke="white" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />}
+        </DrawIn>
 
-      {/* rideable windows: right speed and right direction */}
-      {m.wins.map((w) => (
-        <rect key={w.start} x={m.x(w.start)} width={Math.max(m.x(w.end + HOUR) - m.x(w.start), 4)} y={T} height={H - T - B}
-          fill="rgb(52 211 153 / .1)" rx="3" />
-      ))}
+        {m.nbmX != null && <rect pointerEvents="none" x={m.nbmX} width={Math.max(0, W - R - m.nbmX)} y={T} height={H - T - B} fill={`url(#${ids.hatch})`} />}
+        <Handoffs hand={m.hand} box={box} W={W} labelY={14} confidence />
+        {nowX != null && <NowLine x={nowX} box={box} tag={!c} />}
 
-      {m.labels.map((l) => (
-        <g key={l.x}>
-          {l.day && <line x1={l.x} x2={l.x} y1={T} y2={H - B} stroke="rgb(255 255 255 / .1)" />}
-          <text x={l.x} y={H - 8} textAnchor="middle" fontSize="10" fill={l.day ? "rgb(255 255 255 / .75)" : "rgb(255 255 255 / .35)"} fontWeight={l.day ? 600 : 400}>{l.text}</text>
-        </g>
-      ))}
-
-      <motion.path key={`a-${range}`} d={m.area} fill={`url(#${gradId})`} mask={`url(#${gradId}-m)`}
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.8 }} />
-      <motion.path key={`g-${range}`} d={m.gust} fill="none" stroke={`url(#${gradId})`} strokeOpacity=".55" strokeWidth="1.4" strokeDasharray="3 4"
-        initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.2, ease: "easeOut" }} />
-      <motion.path key={`s-${range}`} d={m.speed} fill="none" stroke={`url(#${gradId})`} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"
-        initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.1, ease: "easeOut" }} />
-
-      {/* what the station actually measured */}
-      {m.obsLine && (
-        <motion.path key={`o-${range}`} d={m.obsLine} fill="none" stroke="white" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"
-          style={{ filter: "drop-shadow(0 0 3px rgb(255 255 255 / .55))" }}
-          initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.3, ease: "easeOut", delay: 0.25 }} />
-      )}
-
-      {m.nbmX != null && <rect pointerEvents="none" x={m.nbmX} width={W - R - m.nbmX} y={T} height={H - T - B} fill={`url(#${gradId}-hatch)`} />}
-      {m.hand.map((d, k) => {
-        const to = MODEL_INFO[d.to], text = to.label + (d.to === "nbm" ? " · lower confidence" : "");
-        const right = W - R - d.x > text.length * 5.4 + 8; // room for the label after the line, else put it before
-        return (
-          <g key={d.t} pointerEvents="none" data-handoff={to.label}>
-            <line x1={d.x} x2={d.x} y1={T} y2={H - B} stroke={to.color} strokeOpacity=".5" strokeDasharray="3 3" />
-            {k === 0 && right && d.x - L > 34 && (
-              <text x={d.x - 4} y={T + 9} textAnchor="end" fontSize="9" fontWeight="600" fill="rgb(255 255 255 / .45)">{MODEL_INFO[d.from].label}</text>
-            )}
-            <text x={right ? d.x + 4 : d.x - 4} y={T + 9} textAnchor={right ? "start" : "end"} fontSize="9" fontWeight="600" fill={to.color} fillOpacity=".8">{text}</text>
+        {c && (
+          <g pointerEvents="none">
+            <line x1={m.x(c.t)} x2={m.x(c.t)} y1={T - 2} y2={H - B} className="stroke-fg" strokeOpacity=".7" />
+            <circle cx={m.x(c.t)} cy={m.y(c.gust)} r="2.5" className="fill-fg-2" />
+            <circle cx={m.x(c.t)} cy={m.y(c.speed)} r="5" fill={windColor(c.speed)} strokeWidth="2" className="stroke-ink" />
+            {cObs && <circle cx={m.x(cObs.t)} cy={m.y(cObs.speed)} r="4" fill="white" strokeWidth="2" className="stroke-ink" />}
+            <Pill x={m.x(c.t)} y={1} minX={2} maxX={W - 2}>
+              <tspan className="fill-fg" fontWeight="600">{fmtWhen(c.t, tz)}</tspan>
+              {` · ${Math.round(c.speed)} kn ${compass(c.dir)} · gusts ${Math.round(c.gust)}`}
+              {cObs ? ` · actual ${Math.round(cObs.speed)}` : ""}
+            </Pill>
           </g>
-        );
-      })}
-
-      {nowX != null && (
-        <g>
-          <line x1={nowX} x2={nowX} y1={T} y2={H - B} stroke="rgb(255 255 255 / .5)" strokeDasharray="2 3" />
-          <text x={nowX + 4} y={T + 9} fontSize="9" fill="rgb(255 255 255 / .6)" fontWeight="600">NOW</text>
-        </g>
-      )}
-
-      {c && (
-        <g pointerEvents="none">
-          <line x1={m.x(c.t)} x2={m.x(c.t)} y1={T} y2={H - B} stroke="white" strokeOpacity=".7" />
-          <circle cx={m.x(c.t)} cy={m.y(c.gust)} r="3" fill="white" fillOpacity=".6" />
-          <circle cx={m.x(c.t)} cy={m.y(c.speed)} r="5" fill={windColor(c.speed)} stroke="#05080f" strokeWidth="2" />
-          {cObs && <circle cx={m.x(cObs.t)} cy={m.y(cObs.speed)} r="4" fill="white" stroke="#05080f" strokeWidth="2" />}
-          {cObs && (
-            <text x={Math.min(Math.max(m.x(c.t), L + 60), W - 70)} y={T + 22} textAnchor="middle" fontSize="11" fontWeight="600" fill="white" className="num"
-              style={{ paintOrder: "stroke", stroke: "#05080f", strokeWidth: 3 }}>
-              model {Math.round(c.speed)} · actual {Math.round(cObs.speed)}
-            </text>
-          )}
-        </g>
-      )}
-    </svg>
+        )}
+      </svg>
+      <p id={ids.desc} hidden>{summary}</p>
     </div>
   );
-}
+});

@@ -4,18 +4,29 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>SeaSensei</title>
-    <meta name="description" content="Live wind and HRRR forecasts for your kite spots." />
+    <meta name="description" content="Live wind, forecasts and today's best kite sessions for your spots around Tampa Bay." />
+    <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#05080f" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="SeaSensei" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SeaSensei" />
+    <meta property="og:title" content="SeaSensei — is it kiting today?" />
+    <meta property="og:description" content="Live wind, forecasts and today's best kite sessions for your spots around Tampa Bay." />
+    <meta property="og:image" content="https://seasensei.com/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="alternate" type="application/rss+xml" title="SeaSensei wind discussion" href="/feed.xml" />
-    <link rel="icon" href="/icon.svg" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon-180.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@500;600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- Paint the night-sea background before any CSS or JS arrives: no white flash on a cold start. -->
+    <style>html, body { background: #05080f; color-scheme: dark; }</style>
   </head>
   <body>
     <div id="root"></div>

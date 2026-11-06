@@ -1,34 +1,70 @@
-import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useRef } from "react";
-import Map, { GeolocateControl, Marker, NavigationControl, useMap, type MapLayerMouseEvent } from "react-map-gl/maplibre";
-import clsx from "clsx";
+import { getVersion, setWorkerUrl } from "maplibre-gl";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import Map, { GeolocateControl, NavigationControl, useMap, type MapLayerMouseEvent } from "react-map-gl/maplibre";
 import { useLiveStations } from "../lib/data";
-import { ago, useSpotNow } from "../lib/useSpotNow";
+import { useRankedSpots } from "../lib/useSpotNow";
 import type { Bounds, LiveReading, Spot, WindGrid } from "../lib/wind";
-import { compass, nearestHour, rideState, windColor } from "../lib/wind";
-import { useState } from "react";
-import { WindArrow } from "./bits";
+import { tuneBasemap } from "./map/basemap";
+import { Camera, type Padding } from "./map/Camera";
+import { useDeclutter, useOffBand } from "./map/declutter";
+import { PinMarker } from "./map/PinMarker";
+import { prefersReducedMotion } from "./map/reducedMotion";
+import { SpotMarker } from "./map/SpotMarker";
+import { StationMarkers } from "./map/StationMarkers";
 import { WindParticles } from "./WindParticles";
 
+// MapLibre finds its worker through import.meta.url, which breaks once bundled: point it at the copy that
+// scripts/copy-maplibre-worker.mjs puts in public/. Here, not in main.tsx, so maplibre stays out of the entry chunk
+// (App lazy-loads this module) and runs before any map is made.
+setWorkerUrl(`/maplibre/${getVersion()}/maplibre-gl-worker.mjs`);
+
 export const MAP_STYLE = "https://tiles.openfreemap.org/styles/dark";
+
+type LatLon = { lat: number; lon: number };
+
+/** What the shell can ask of the map without a pointer on it (adding a spot from the keyboard or by location). */
+export type MapApi = {
+  /** The map point under a page pixel (e.g. the cross-hair at the middle of the open map). */
+  pointAt(x: number, y: number): LatLon | null;
+  /** Brings a point into the open map if it isn't there (a short ease; a cut under reduced motion). */
+  reveal(p: LatLon): void;
+};
 
 type Props = {
   spots: Spot[];
   selectedId: string | null;
+  /** A spot whose card is hovered or focused in the list: ringed and named like the selected one. */
+  highlightId?: string | null;
   onSelect: (s: Spot) => void;
   addMode: boolean;
-  pin: { lat: number; lon: number } | null;
-  onPin: (p: { lat: number; lon: number }) => void;
+  pin: LatLon | null;
+  onPin: (p: LatLon) => void;
   onBounds: (b: Bounds) => void;
   grid: WindGrid | undefined;
-  padding: { top: number; bottom: number; left: number; right: number };
+  /** The map area chrome leaves visible: the camera centres spots in it and particles are born in it. */
+  padding: Padding;
   showStations: boolean;
   at: number | null; // null = now; else a forecast hour (ms)
+  /** The map is covered (full phone sheet, a dialog, full-screen charts): the wind particles stop. */
+  paused?: boolean;
+  /** Filled in once the map exists. */
+  apiRef?: RefObject<MapApi | null>;
   /** Bottom-right is under the phone sheet, so phones pass top-right. */
   controlPosition?: "top-right" | "bottom-right";
+  /** Zoom in / out buttons (desktop). Phones pinch, and their rail stays short. */
+  zoomControls?: boolean;
 };
 
-export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBounds, grid, padding, showStations, at, controlPosition = "bottom-right" }: Props) {
+const NO_READINGS: LiveReading[] = [];
+
+/**
+ * The live wind map: a calm night-sea basemap, the wind field as streamlines, one marker per spot (its wind for the
+ * timeline's hour, ringed by its verdict) and, at "now", one chip per live sensor.
+ */
+export const WindMap = memo(function WindMap({
+  spots, selectedId, highlightId = null, onSelect, addMode, pin, onPin, onBounds, grid, padding, showStations, at, paused = false, apiRef,
+  controlPosition = "bottom-right", zoomControls = true,
+}: Props) {
   const initial = useMemo(() => {
     if (!spots.length) return { longitude: -82.6, latitude: 27.75, zoom: 9.5 };
     const lats = spots.map((s) => s.lat), lons = spots.map((s) => s.lon);
@@ -41,43 +77,109 @@ export function WindMap({ spots, selectedId, onSelect, addMode, pin, onPin, onBo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const [openStation, setOpenStation] = useState<string | null>(null);
+  // A station's card goes with the station layer (scrubbing into the future, or turning stations off).
+  if (openStation && (at != null || !showStations)) setOpenStation(null);
+  // Bumped on every tap in add mode, so a new tap replays the pin's drop and a drag doesn't.
+  const [drop, setDrop] = useState(0);
+
+  const onClick = useCallback((e: MapLayerMouseEvent) => {
+    if (addMode) { setDrop((d) => d + 1); onPin({ lat: e.lngLat.lat, lon: e.lngLat.lng }); }
+    else setOpenStation(null);
+  }, [addMode, onPin]);
+  const toggleStation = useCallback((id: string) => setOpenStation((o) => (o === id ? null : id)), []);
+  const closeStation = useCallback(() => setOpenStation(null), []);
+
   return (
     <Map
       initialViewState={initial}
       mapStyle={MAP_STYLE}
       style={{ position: "absolute", inset: 0 }}
-      onClick={(e: MapLayerMouseEvent) => addMode && onPin({ lat: e.lngLat.lat, lon: e.lngLat.lng })}
+      onClick={onClick}
       cursor={addMode ? "crosshair" : undefined}
       attributionControl={{ compact: true }}
       dragRotate={false}
+      touchPitch={false}
+      pitchWithRotate={false}
       maxPitch={0}
     >
-      <WindParticles grid={grid} />
+      <MapSetup apiRef={apiRef} padding={padding} />
+      <WindParticles grid={grid} inset={padding} paused={paused} />
       <BoundsReporter onBounds={onBounds} />
-      <FlyTo spots={spots} selectedId={selectedId} padding={padding} />
-      <NavigationControl position={controlPosition} showCompass={false} />
+      <Camera spots={spots} selectedId={selectedId} padding={padding} reframe={!addMode} />
+      {zoomControls && <NavigationControl position={controlPosition} showCompass={false} />}
       <GeolocateControl position={controlPosition} />
-      {/* Live meters are "right now". Scrubbing the timeline (at != null) hides them. */}
-      {showStations && at == null && <StationMarkers />}
-      {spots.map((s) => (
-        <SpotMarker key={s.id} spot={s} selected={s.id === selectedId} onClick={() => onSelect(s)} dim={addMode} at={at} />
-      ))}
-      <AnimatePresence>
-        {pin && (
-          <Marker key={`${pin.lat},${pin.lon}`} longitude={pin.lon} latitude={pin.lat} anchor="bottom">
-            <motion.div initial={{ y: -40, opacity: 0, scale: 0.6 }} animate={{ y: 0, opacity: 1, scale: 1 }}
-              transition={{ type: "spring", stiffness: 420, damping: 18 }} className="relative flex flex-col items-center">
-              <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-cyan-300 to-emerald-400 text-slate-950 shadow-xl shadow-cyan-500/40 ring-4 ring-white/20">
-                <span className="text-lg font-bold">+</span>
-              </div>
-              <div className="h-3 w-0.5 bg-white/80" />
-              <span className="ping-soft absolute -bottom-1.5 h-3 w-3 rounded-full bg-cyan-300" />
-            </motion.div>
-          </Marker>
-        )}
-      </AnimatePresence>
+      <Markers spots={spots} selectedId={selectedId} highlightId={highlightId} onSelect={onSelect} addMode={addMode} at={at} padding={padding}
+        showStations={showStations} openStation={openStation} onToggleStation={toggleStation} onCloseStation={closeStation} />
+      {pin && addMode && <PinMarker pin={pin} drop={drop} onPin={onPin} />}
     </Map>
   );
+});
+
+function Markers({ spots, selectedId, highlightId, onSelect, addMode, at, padding, showStations, openStation, onToggleStation, onCloseStation }: {
+  spots: Spot[]; selectedId: string | null; highlightId: string | null; onSelect: (s: Spot) => void; addMode: boolean; at: number | null;
+  padding: Padding; showStations: boolean; openStation: string | null; onToggleStation: (id: string) => void; onCloseStation: () => void;
+}) {
+  const live = useLiveStations();
+  // Live sensors are "right now": scrubbing the timeline (at != null) takes them off the map.
+  const readings = showStations && at == null ? live.data ?? NO_READINGS : NO_READINGS;
+  // The board's order (best first): the best spot's marker keeps its name and stacks on top.
+  const ranked = useRankedSpots();
+  const rankKey = ranked.map((r) => r.spot.id).join(",");
+  const rank = useMemo(() => (rankKey ? rankKey.split(",") : []), [rankKey]);
+  const { hidden, labelled } = useDeclutter(spots, readings, { selectedId, highlightId, rank });
+  const offBand = useOffBand(spots, readings, padding);
+  return (
+    <>
+      {readings.length > 0 && (
+        <StationMarkers readings={readings} hidden={hidden} offBand={offBand} open={openStation} onToggle={onToggleStation} onClose={onCloseStation} dim={addMode} />
+      )}
+      {spots.map((s) => (
+        <SpotMarker key={s.id} spot={s} selected={s.id === selectedId} highlighted={s.id === highlightId} onSelect={onSelect} dim={addMode}
+          offscreen={offBand.has(`s:${s.id}`) && s.id !== selectedId} at={at} labels={labelled.has(s.id)} rank={rank.indexOf(s.id)} />
+      ))}
+    </>
+  );
+}
+
+/** One-time map setup: the night-sea basemap, north-up only (no touch or keyboard rotation), and the shell's MapApi. */
+function MapSetup({ apiRef, padding }: { apiRef?: RefObject<MapApi | null>; padding: Padding }) {
+  const { current } = useMap();
+  const pad = useRef(padding);
+  pad.current = padding;
+  useEffect(() => {
+    const map = current?.getMap();
+    if (!map) return;
+    map.touchZoomRotate.disableRotation();
+    map.keyboard.disableRotation();
+    // The canvas takes keyboard focus (arrows pan, +/− zoom). The app's focus ring sits outside an element, where the
+    // map would clip it; draw it inside the canvas instead.
+    map.getCanvas().classList.add("focus-visible:-outline-offset-2");
+    const tune = () => tuneBasemap(map);
+    map.on("style.load", tune);
+    try { if (map.getStyle()?.layers?.length) tune(); } catch { /* style not parsed yet: style.load will tune it */ }
+    if (apiRef) {
+      (apiRef as { current: MapApi | null }).current = {
+        pointAt(x, y) {
+          const r = map.getContainer().getBoundingClientRect();
+          const ll = map.unproject([x - r.left, y - r.top]);
+          return Number.isFinite(ll.lat) && Number.isFinite(ll.lng) ? { lat: ll.lat, lon: ll.lng } : null;
+        },
+        reveal({ lat, lon }) {
+          const el = map.getContainer(), p = map.project([lon, lat]), q = pad.current;
+          const inside = p.x >= q.left && p.x <= el.clientWidth - q.right && p.y >= q.top + 40 && p.y <= el.clientHeight - q.bottom;
+          if (inside) return;
+          const opts = { center: [lon, lat] as [number, number], padding: q, zoom: Math.max(map.getZoom(), 11) };
+          if (prefersReducedMotion()) map.jumpTo(opts); else map.easeTo({ ...opts, duration: 600 });
+        },
+      };
+    }
+    return () => {
+      map.off("style.load", tune);
+      if (apiRef) (apiRef as { current: MapApi | null }).current = null;
+    };
+  }, [current, apiRef]);
+  return null;
 }
 
 /** Reports the visible area on mount and after every move (drives the wind-field request). */
@@ -98,83 +200,4 @@ function BoundsReporter({ onBounds }: { onBounds: (b: Bounds) => void }) {
     return () => { map.off("moveend", report); map.off("load", report); };
   }, [current]);
   return null;
-}
-
-function FlyTo({ spots, selectedId, padding }: { spots: Spot[]; selectedId: string | null; padding: Props["padding"] }) {
-  const { current: map } = useMap();
-  const last = useRef<string | null>(null);
-  useEffect(() => {
-    if (!map || !selectedId || last.current === selectedId) return;
-    last.current = selectedId;
-    const s = spots.find((x) => x.id === selectedId);
-    if (s) map.flyTo({ center: [s.lon, s.lat], zoom: Math.max(map.getZoom(), 11.2), padding, duration: 1400, essential: true });
-  }, [map, selectedId, spots, padding]);
-  useEffect(() => { if (!selectedId) last.current = null; }, [selectedId]);
-  return null;
-}
-
-function SpotMarker({ spot, selected, onClick, dim, at }: { spot: Spot; selected: boolean; onClick: () => void; dim: boolean; at: number | null }) {
-  const live = useSpotNow(spot);
-  const future = at != null ? nearestHour(live.fc.data?.hours ?? [], at) : null;
-  const now = at != null ? future : live.now;
-  const ride = now ? rideState(now.speed, spot, now.dir) : null;
-  const ring = ride === "good" ? "ring-emerald-400/80" : ride === "above" ? "ring-rose-400/80" : ride === "offdir" ? "ring-amber-300/70" : "ring-white/20";
-  return (
-    <Marker longitude={spot.lon} latitude={spot.lat} anchor="bottom" onClick={(e) => { e.originalEvent.stopPropagation(); onClick(); }}
-      style={{ zIndex: selected ? 10 : 1 }}>
-      <motion.button initial={{ scale: 0, y: 10 }} animate={{ scale: selected ? 1.12 : 1, y: 0, opacity: dim ? 0.45 : 1 }}
-        whileHover={{ scale: selected ? 1.14 : 1.06 }} transition={{ type: "spring", stiffness: 400, damping: 22 }}
-        aria-label={`${spot.name}${now ? `, ${Math.round(now.speed)} knots` : ""}`}
-        className="group relative flex flex-col items-center">
-        {ride === "good" && <span className="ping-soft absolute left-1/2 top-3 -z-10 h-7 w-7 -translate-x-1/2 rounded-full bg-emerald-400/60" />}
-        <div className={clsx("glass flex items-center gap-1.5 rounded-full py-1 pl-1.5 pr-2.5 ring-2", ring, selected && "!bg-slate-900/90")}>
-          <span className="grid h-6 w-6 place-items-center rounded-full" style={{ background: now ? windColor(now.speed, 0.22) : "rgb(255 255 255 / .06)", color: now ? windColor(now.speed) : "#94a3b8" }}>
-            {now ? <WindArrow dir={now.dir} size={14} /> : <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white/50" />}
-          </span>
-          <span className="num text-sm font-semibold">{now ? Math.round(now.speed) : "–"}</span>
-          <span className="text-[10px] text-white/50">kn</span>
-        </div>
-        <span className="mt-0.5 max-w-[9rem] truncate rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white/85 backdrop-blur">{spot.name}</span>
-        <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_8px_white]" />
-      </motion.button>
-    </Marker>
-  );
-}
-
-/** Every live sensor as a compact marker; tap one for its name, gust and age. */
-function StationMarkers() {
-  const live = useLiveStations();
-  const [open, setOpen] = useState<string | null>(null);
-  return (
-    <>
-      {(live.data ?? []).map((r) => (
-        <StationMarker key={r.id} r={r} open={open === r.id} onToggle={() => setOpen((o) => (o === r.id ? null : r.id))} />
-      ))}
-    </>
-  );
-}
-
-function StationMarker({ r, open, onToggle }: { r: LiveReading; open: boolean; onToggle: () => void }) {
-  const c = windColor(r.speed);
-  return (
-    <Marker longitude={r.lon} latitude={r.lat} anchor="center" style={{ zIndex: open ? 9 : 0 }}
-      onClick={(e) => { e.originalEvent.stopPropagation(); onToggle(); }}>
-      <motion.button initial={{ scale: 0 }} animate={{ scale: 1 }} whileHover={{ scale: 1.1 }}
-        aria-label={`${r.name}: ${Math.round(r.speed)} knots from ${compass(r.dir)}`}
-        className="relative flex items-center gap-1 rounded-lg border border-white/10 bg-slate-950/75 px-1.5 py-0.5 backdrop-blur">
-        <span style={{ color: c }}>{r.speed > 0.5 ? <WindArrow dir={r.dir} size={11} /> : <span className="block h-1.5 w-1.5 rounded-full bg-current" />}</span>
-        <span className="num text-[11px] font-semibold" style={{ color: c }}>{Math.round(r.speed)}</span>
-        <AnimatePresence>
-          {open && (
-            <motion.span initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
-              className="glass absolute bottom-full left-1/2 mb-1.5 w-max max-w-[14rem] -translate-x-1/2 rounded-xl px-2.5 py-1.5 text-left text-[11px] leading-snug">
-              <span className="block font-semibold text-white">{r.name}</span>
-              <span className="num block text-white/70">{Math.round(r.speed)} kn{r.gust != null ? ` · g${Math.round(r.gust)}` : ""} · {compass(r.dir)}</span>
-              <span className="block text-white/40">{r.source === "airport" ? "Airport (hourly)" : "NOAA PORTS (6-min)"} · {ago(r.t)}</span>
-            </motion.span>
-          )}
-        </AnimatePresence>
-      </motion.button>
-    </Marker>
-  );
 }

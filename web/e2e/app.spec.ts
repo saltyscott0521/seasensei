@@ -15,7 +15,7 @@ test("opens on the map with the three Tampa Bay spots, live stations and a wind 
   await expect(page.getByRole("heading", { name: "Skyway" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Picnic Island" })).toBeVisible();
   await expect(page.locator(".maplibregl-canvas")).toBeVisible();
-  await expect(page.getByText("Live wind · HRRR field")).toBeVisible();
+  await expect(page.getByText("Now · HRRR forecast")).toBeVisible();
   // one marker per spot + NOAA sensors and the airport from the mocks
   await expect(page.locator(".maplibregl-marker")).toHaveCount(3 + 3 + 1);
   await expect(page.getByLabel(/Old Port Tampa: \d+ knots/)).toBeVisible();
@@ -119,7 +119,7 @@ test("suggest from coastline reads real water polygons and picks Fort De Soto's 
 
 test("add a spot by tapping the map", async ({ page }) => {
   await page.getByRole("button", { name: "Add a spot" }).click();
-  await expect(page.getByText("Tap the map to drop a pin").first()).toBeVisible();
+  await expect(page.getByText(/(Tap|Click) the map to drop a pin/).first()).toBeVisible();
   await page.locator(".maplibregl-canvas").click({ position: { x: 700, y: 420 } });
   await page.getByPlaceholder("e.g. Davis Islands").fill("Davis Islands");
   await page.getByRole("button", { name: "Save spot" }).click();
@@ -157,15 +157,17 @@ test("the timeline scrubs the week: header, markers and station layer follow the
   const max = Number(await slider.getAttribute("aria-valuemax"));
   await expect.poll(async () => Math.abs(Number(await slider.getAttribute("aria-valuenow")) - max / 2)).toBeLessThan(4);
   await page.getByRole("button", { name: "Back to now" }).click();
-  await expect(page.getByText("Live wind · HRRR field")).toBeVisible();
-  const nowMarker = await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto']").getAttribute("aria-label");
+  await expect(page.getByText("Now · HRRR forecast")).toBeVisible();
+  // The map follows the hour a beat after the status (it reads a deferred copy); live stations only show at "now".
+  await expect(page.getByLabel(/Old Port Tampa: \d+ knots/)).toBeVisible();
+  const fds = page.locator(".maplibregl-marker button[aria-label^='Fort De Soto']");
+  const nowMarker = await fds.getAttribute("aria-label");
 
   await slider.focus();
   for (let i = 0; i < 12; i++) await page.keyboard.press("ArrowRight");
   await expect(page.getByText(/^Forecast · /)).toBeVisible();
   await expect(page.getByLabel(/knots from/)).toHaveCount(0); // live stations hide in the future
-  const laterMarker = await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto']").getAttribute("aria-label");
-  expect(laterMarker).not.toBe(nowMarker);
+  await expect.poll(() => fds.getAttribute("aria-label")).not.toBe(nowMarker);
 
   await page.getByRole("button", { name: "Play the week" }).click();
   const before = await slider.getAttribute("aria-valuenow");
@@ -173,7 +175,7 @@ test("the timeline scrubs the week: header, markers and station layer follow the
   await page.getByRole("button", { name: "Pause" }).click();
 
   await page.getByRole("button", { name: "Back to now" }).click();
-  await expect(page.getByText("Live wind · HRRR field")).toBeVisible();
+  await expect(page.getByText("Now · HRRR forecast")).toBeVisible();
   await expect(page.getByLabel(/Old Port Tampa: \d+ knots/)).toBeVisible();
 });
 
@@ -187,7 +189,7 @@ test("switching the primary model changes the map, timeline and spot forecasts, 
   // RRFS first: the map field and the spots ask for RRFS then NBM, and the header says so
   asked.length = 0;
   await picker.selectOption("rrfs");
-  await expect(page.getByText("Live wind · RRFS field")).toBeVisible();
+  await expect(page.getByText("Now · RRFS forecast")).toBeVisible();
   await expect.poll(() => asked.filter((m) => m === "ncep_rrfs_conus,ncep_nbm_conus").length).toBeGreaterThan(1);
   await page.getByRole("slider", { name: "Forecast time" }).focus();
   for (let i = 0; i < 30; i++) await page.keyboard.press("ArrowRight");
@@ -202,12 +204,12 @@ test("switching the primary model changes the map, timeline and spot forecasts, 
 
   // ECMWF covers the week on its own: no handoffs, nothing hatched as lower confidence
   await page.getByRole("combobox", { name: "Forecast model" }).selectOption("ecmwf");
-  await expect(page.getByText("Live wind · ECMWF field")).toBeVisible();
+  await expect(page.getByText("Now · ECMWF forecast")).toBeVisible();
   await expect(chart.locator("[data-handoff]")).toHaveCount(0);
   await expect(page.getByText("NBM · lower confidence")).toHaveCount(0);
 
   await page.reload();
-  await expect(page.getByText("Live wind · ECMWF field")).toBeVisible();
+  await expect(page.getByText("Now · ECMWF forecast")).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Forecast model" })).toHaveValue("ecmwf");
 });
 

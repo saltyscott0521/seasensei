@@ -1,0 +1,44 @@
+/* The phone bottom sheet (shell/Sheet.tsx) and the desktop panel's scroller (shell/Panel.tsx). */
+:root { --sab: env(safe-area-inset-bottom, 0px); }
+
+[data-vaul-drawer] { touch-action: none; }
+/* Vaul paints an ::after below the sheet (seen when it is dragged past its top snap) with the sheet's own
+   background; the sheet element itself is transparent here (its surface is a layer inside), so give it one. */
+[data-vaul-drawer][data-vaul-drawer-direction="bottom"][data-vaul-snap-points]::after { background: rgb(11 17 29); }
+/* The raised sheet's surface: opaque and unblurred, the glass's own colour (see shell/Sheet.tsx). At rest it is
+   .glass. Even a few percent of see-through lets the map's bright markers ghost through a full sheet of text. */
+.sheet-solid {
+  background: rgb(11 17 29);
+  border: 1px solid var(--color-line);
+  border-bottom: 0;
+  box-shadow: var(--shadow-float);
+}
+/* Reduced motion: the sheet snaps without sliding. */
+@media (prefers-reduced-motion: reduce) {
+  [data-vaul-drawer] { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+/* The sheet's content scrolls at mid and full. Its box runs past the bottom of the screen by exactly vaul's
+   translate (--snap-point-height), so that much padding lets the last item scroll fully into view. */
+.sheet-scroll {
+  padding-bottom: calc(var(--snap-point-height, 0px) + max(env(safe-area-inset-bottom), 16px));
+  scrollbar-width: none;
+}
+.sheet-scroll::-webkit-scrollbar { display: none; }
+
+/* Short phones carry the timeline inside the sheet: a flat card there, never glass on glass. */
+[data-inline-timeline] .glass {
+  background: var(--color-surface-2);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+/* A view's heading takes focus when the view opens (for screen readers and keyboards); it isn't a control, so no ring. */
+[data-view] [tabindex="-1"]:focus { outline: none; }
+
+/* Desktop panel: a thin, quiet scrollbar a mouse can still find. */
+.panel-scroll { scrollbar-width: thin; scrollbar-color: var(--color-line-strong) transparent; }
+
+.safe-b { padding-bottom: max(env(safe-area-inset-bottom), 12px); }
+.safe-t { padding-top: max(env(safe-area-inset-top), 12px); }

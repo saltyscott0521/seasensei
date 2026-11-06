@@ -7,7 +7,8 @@ export type Spot = {
   lon: number;
   min: number; // knots, bottom of the range this spot is ridden in
   max: number;
-  station?: string; // NOAA CO-OPS station id for live wind
+  /** NOAA CO-OPS station id for live wind; "none" = forecast only; missing = auto (nearest live sensor, see lib/session.ts). */
+  station?: string;
   /** Wind directions (FROM, degrees) this spot works in: centre ± width/2. Missing or width ≥ 360 = any. */
   dirC?: number;
   dirW?: number;
@@ -55,6 +56,15 @@ export function handoffs(hours: Hour[]) {
 
 /** "HRRR → RRFS → NBM" */
 export const chainLabel = (primary: Model) => chainFor(primary).map((m) => MODEL_INFO[m].label).join(" → ");
+
+/** What each choice of lead model means, in a rider's words (the picker's visible caption). */
+export const CHAIN_PLAIN: Record<Model, string> = {
+  hrrr: "Sharpest local model first, then NOAA's blend",
+  rrfs: "NOAA's new local model first, then its blend",
+  nbm: "NOAA's blend of models, all week",
+  ecmwf: "The European global model, all week",
+  gfs: "The US global model, all week",
+};
 export type Hour = { t: number; speed: number; gust: number; dir: number; model: Model }; // t = ms epoch, knots, deg FROM
 export type Forecast = { timeZone: string; hours: Hour[] };
 export type Observation = { name: string; t: number; speed: number; gust: number; dir: number };

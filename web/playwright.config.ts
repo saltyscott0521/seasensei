@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const port = Number(process.env.E2E_PORT) || 4173;
+
 export default defineConfig({
   testDir: "e2e",
   timeout: 60_000,
@@ -9,7 +11,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: `http://127.0.0.1:${port}`,
     trace: "retain-on-failure",
     reducedMotion: "reduce", // software WebGL is slow; this also thins the wind particles
     launchOptions: { args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] },
@@ -20,5 +22,5 @@ export default defineConfig({
     { name: "server", testMatch: /server\.spec\.ts/ },
     { name: "phone", testMatch: /(phone)\.spec\.ts/, use: { ...devices["Pixel 7"] } },
   ],
-  webServer: { command: "npm run dev -- --host 127.0.0.1 --port 4173 --strictPort", url: "http://127.0.0.1:4173", reuseExistingServer: !process.env.CI, timeout: 60_000 },
+  webServer: { command: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`, url: `http://127.0.0.1:${port}`, reuseExistingServer: !process.env.CI, timeout: 60_000 },
 });

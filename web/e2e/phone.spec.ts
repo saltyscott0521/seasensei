@@ -20,7 +20,8 @@ test("phone: bottom sheet, spot detail, timeline; nothing scrolls sideways", asy
   expect(cross.y).toBeGreaterThan(80);
   expect(cross.y).toBeLessThan(card.y);
 
-  // the sheet's peek leads with the wind discussion; open a spot from its map marker, as you would on a phone
+  // the sheet's peek leads with the Today board (the wind discussion follows the spots); open a spot from its map marker, as you would on a phone
+  await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeInViewport();
   await expect(page.getByRole("region", { name: "Wind discussion" })).toBeVisible();
   // (the marker sits outside the sheet, which aria-hides it — see CLAUDE.md — so find it by class, not role)
   await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click();
@@ -45,7 +46,8 @@ test("phone: bottom sheet, spot detail, timeline; nothing scrolls sideways", asy
 test("phone: the wind discussion opens as a full dialog, scrolls, and closes", async ({ page }) => {
   await mockApis(page);
   await page.goto("/");
-  // the summary is tappable from the sheet's low resting position, no need to expand it first
+  // the discussion follows the spots: raise the sheet, then tap its summary
+  await raiseSheet(page);
   await page.getByRole("region", { name: "Wind discussion" }).getByRole("button", { name: "Read the full wind discussion" }).click();
   const dialog = page.getByRole("dialog", { name: "Wind discussion" });
   await expect(dialog.getByTestId("discussion-driver").first()).toBeVisible();
@@ -66,6 +68,15 @@ test("phone: the wind discussion opens as a full dialog, scrolls, and closes", a
   await expect(dialog).toBeHidden();
 });
 
+/** Drag the sheet up by its top edge, as a thumb would, to its highest snap (the discussion sits below the spots). */
+async function raiseSheet(page: import("@playwright/test").Page) {
+  const sh = (await page.locator("[data-vaul-drawer]").boundingBox())!;
+  await page.mouse.move(sh.x + sh.width / 2, sh.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(sh.x + sh.width / 2, 40, { steps: 12 });
+  await page.mouse.up();
+}
+
 /** The control under the pointer, walking up to its button so an icon span still counts. */
 async function hitLabel(page: import("@playwright/test").Page, box: { x: number; y: number; width: number; height: number }) {
   return page.evaluate(({ x, y }) => {
@@ -74,25 +85,29 @@ async function hitLabel(page: import("@playwright/test").Page, box: { x: number;
   }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
 }
 
-test("phone: zoom and locate sit above the sheet, on the resting peek and after opening a spot", async ({ page }) => {
+test("phone: the rail (add, stations, locate) sits above the sheet, on the resting peek and after opening a spot; pinch zooms", async ({ page }) => {
   await mockApis(page);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible();
-  // Map controls sit outside the sheet, which aria-hides them — same as the markers — so locate by aria-label.
+  // The rail sits outside the sheet, which aria-hides it — same as the markers — so locate by aria-label.
   const control = (label: string) => page.locator(`button[aria-label="${label}"]`);
-  for (const label of ["Zoom in", "Find my location"]) {
+  const RAIL = ["Add a spot", "Show live stations", "Find my location"];
+  for (const label of RAIL) {
     const box = (await control(label).boundingBox())!;
     expect(await hitLabel(page, box), label).toBe(label);
   }
+  // no zoom buttons on phones (a "+" next to "Add a spot" was one tap from the wrong one)
+  await expect(control("Zoom in")).toHaveCount(0);
+  await expect(control("Zoom out")).toHaveCount(0);
   await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click();
   await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
-  for (const label of ["Zoom in", "Zoom out", "Find my location"]) {
+  for (const label of RAIL) {
     const box = (await control(label).boundingBox())!;
     expect(await hitLabel(page, box), label).toBe(label);
   }
 });
 
-test("phone: a short screen does not lay the timeline over the colour legend", async ({ page }) => {
+test("phone: a short screen does not lay the timeline over the status pill or the control rail", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 });
   await mockApis(page);
   await page.goto("/");
@@ -101,16 +116,20 @@ test("phone: a short screen does not lay the timeline over the colour legend", a
   await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click({ force: true });
   await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
   const timeline = (await page.getByTestId("outlook").locator("xpath=ancestor::div[contains(@class,'glass')][1]").boundingBox())!;
-  const legend = (await page.getByText("40+", { exact: true }).boundingBox())!;
-  const overlaps = timeline.x < legend.x + legend.width && timeline.x + timeline.width > legend.x
-    && timeline.y < legend.y + legend.height && timeline.y + timeline.height > legend.y;
-  expect(overlaps, `timeline ${JSON.stringify(timeline)} legend ${JSON.stringify(legend)}`).toBe(false);
+  // The top chrome that replaced the legend: the status pill, the Add / Stations group and the map controls under it.
+  for (const chrome of [page.getByTestId("status-pill"), page.getByTestId("control-rail"), page.locator('button[aria-label="Find my location"]')]) {
+    const box = (await chrome.boundingBox())!;
+    const overlaps = timeline.x < box.x + box.width && timeline.x + timeline.width > box.x
+      && timeline.y < box.y + box.height && timeline.y + timeline.height > box.y;
+    expect(overlaps, `timeline ${JSON.stringify(timeline)} chrome ${JSON.stringify(box)}`).toBe(false);
+  }
 });
 
 test("phone: the discussion close button stays on a narrow screen", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 });
   await mockApis(page);
   await page.goto("/");
+  await raiseSheet(page);
   await page.getByRole("button", { name: "Read the full wind discussion" }).click();
   const close = page.getByRole("dialog", { name: "Wind discussion" }).getByRole("button", { name: "Close" });
   await expect(close).toBeVisible();

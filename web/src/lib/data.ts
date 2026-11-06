@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 import type { DiscussionIndex, DiscussionResponse } from "./discussion";
 import { useSyncExternalStore } from "react";
 import {
@@ -34,9 +34,9 @@ export function setPrimaryModel(m: Model) {
 export const usePrimaryModel = () =>
   useSyncExternalStore((l) => (modelListeners.add(l), () => modelListeners.delete(l)), () => primary);
 
-export const useForecast = (spot: Spot | undefined) => {
-  const model = usePrimaryModel();
-  return useQuery({
+/** One spot's forecast for a primary model. Shared by useForecast and useRankedSpots so their queries dedupe. */
+export const forecastQuery = (model: Model, spot: Pick<Spot, "lat" | "lon"> | undefined) =>
+  queryOptions({
     queryKey: ["forecast", model, spot?.lat, spot?.lon],
     queryFn: () => json(forecastUrl(spot!.lat, spot!.lon, model)).then((j) => parseForecast(j, model)),
     enabled: !!spot,
@@ -44,6 +44,10 @@ export const useForecast = (spot: Spot | undefined) => {
     refetchInterval: 30 * MIN,
     placeholderData: (prev) => prev,
   });
+
+export const useForecast = (spot: Spot | undefined) => {
+  const model = usePrimaryModel();
+  return useQuery(forecastQuery(model, spot));
 };
 
 export const useObservation = (station: string | undefined) =>
@@ -129,13 +133,20 @@ export const useObsHistory = (station: string | undefined) =>
   });
 
 /** HRRR, RRFS, NBM, ECMWF and GFS side by side for one spot (one request). */
-export const useModelCompare = (spot: Spot | undefined, enabled: boolean) =>
+export const useModelCompare = (spot: Spot | undefined, enabled = true) =>
   useQuery({
     queryKey: ["models", spot?.lat, spot?.lon],
     queryFn: () => json(modelsUrl(spot!.lat, spot!.lon)).then(parseModels),
     enabled: !!spot && enabled,
     staleTime: 20 * MIN,
   });
+
+/**
+ * The model comparison for the open spot detail, fetched as soon as it opens (not only on the Models tab) so
+ * session confidence (`confidence()` in session.ts) is ready. Call it only where one spot is open: it costs an
+ * Open-Meteo request per spot.
+ */
+export const useSpotModelCompare = (spot: Spot | undefined) => useModelCompare(spot, true);
 
 /**
  * The daily wind discussion (written once a day on the server, see server/publish.mjs). Without a date it
@@ -170,7 +181,8 @@ function load(): Spot[] {
     const s = JSON.parse(localStorage.getItem(KEY) ?? "null");
     if (Array.isArray(s)) return s;
   } catch { /* private mode or corrupt: fall back to the seed */ }
-  return TAMPA_BAY.map((s) => ({ ...s, id: uid() }));
+  // Stable ids for the seed spots, so a ?spot= link or a reload finds the same spot before anything is saved.
+  return TAMPA_BAY.map((s) => ({ ...s, id: `seed-${s.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}` }));
 }
 function commit(next: Spot[]) {
   spots = next;
@@ -181,7 +193,15 @@ function commit(next: Spot[]) {
 export const spotStore = {
   add: (s: Omit<Spot, "id">) => { const spot = { ...s, id: uid() }; commit([...spots, spot]); return spot; },
   update: (id: string, patch: Partial<Spot>) => commit(spots.map((s) => (s.id === id ? { ...s, ...patch } : s))),
-  remove: (id: string) => commit(spots.filter((s) => s.id !== id)),
+  /** Removes a spot and returns where it was, so `restore` can put it back in the same place. */
+  remove: (id: string) => { const i = spots.findIndex((s) => s.id === id); commit(spots.filter((s) => s.id !== id)); return i; },
+  /** Puts a removed spot back (same id, same position): the Undo after a delete. */
+  restore: (spot: Spot, index = spots.length) => {
+    if (spots.some((s) => s.id === spot.id)) return;
+    const next = [...spots];
+    next.splice(Math.max(0, Math.min(index, next.length)), 0, spot);
+    commit(next);
+  },
 };
 
 export const useSpots = () =>
