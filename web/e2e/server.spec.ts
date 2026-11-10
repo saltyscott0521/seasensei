@@ -388,5 +388,15 @@ test("without an API key nothing is generated and the API says so; bad dates are
     expect(gone.status).toBe(404);
     expect(gone.headers.get("cache-control")).toBe("no-store");
     expect(await (await fetch(`${app.base}/feed.xml`)).text()).toContain("<channel>"); // an empty feed is still a valid feed
+    // malformed URLs get a 400 and the server keeps running (they used to crash the process)
+    const raw = (target: string) => new Promise<number>((resolve, reject) => {
+      const u = new URL(app.base);
+      const sock = net.connect(Number(u.port), u.hostname, () => sock.write(`GET ${target} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`));
+      let buf = ""; sock.on("data", (c) => (buf += c)); sock.on("error", reject);
+      sock.on("close", () => resolve(Number(buf.split(" ")[1])));
+    });
+    expect(await raw("/%E0%A4%A")).toBe(400);
+    expect(await raw("//")).toBe(400);
+    expect((await fetch(`${app.base}/healthz`)).status).toBe(200);
   } finally { await app.stop(); await stubs.close(); }
 });

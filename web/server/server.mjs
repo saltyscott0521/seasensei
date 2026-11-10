@@ -44,7 +44,7 @@ function serveStatic(req, res) {
     "Content-Type": TYPES[ext] ?? "application/octet-stream",
     "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
   });
-  fs.createReadStream(file).pipe(res);
+  fs.createReadStream(file).on("error", () => res.destroy()).pipe(res);
 }
 
 /* ---------------- discussion API ---------------- */
@@ -96,7 +96,7 @@ function feed(res) {
 
 /* ---------------- routing ---------------- */
 
-const server = http.createServer((req, res) => {
+function route(req, res) {
   const url = new URL(req.url ?? "/", "http://x");
   const p = url.pathname;
   if (p === "/healthz") { res.writeHead(200); return res.end("ok"); }
@@ -110,7 +110,21 @@ const server = http.createServer((req, res) => {
   if (p === "/feed.xml") return feed(res);
   if (p === "/api/archive") return sendJson(res, 200, archive.status());
   serveStatic(req, res);
+}
+
+// A bad request must never take the process down (it also runs the schedulers): "//" and a broken percent-escape both throw.
+const server = http.createServer((req, res) => {
+  try { route(req, res); }
+  catch (e) {
+    const bad = e instanceof URIError || (e instanceof TypeError && /Invalid URL/i.test(e.message));
+    if (!bad) console.error("[server] request failed:", req.method, req.url, e);
+    if (res.headersSent) return res.destroy();
+    res.writeHead(bad ? 400 : 500, { "Cache-Control": "no-store" });
+    res.end();
+  }
 });
+process.on("uncaughtException", (e) => console.error("[server] uncaught:", e));
+process.on("unhandledRejection", (e) => console.error("[server] unhandled rejection:", e));
 
 server.listen(PORT, () => {
   console.log(`seasensei on :${PORT} · dist=${DIST} · discussion ${configured() ? `enabled, publishes ${status().publishHour}:00 ${status().timeZone}` : "disabled (no ANTHROPIC_API_KEY)"} · admin ${ADMIN_TOKEN ? "on" : "off"} · forecast archive ${archive.configured() ? `to R2 bucket ${process.env.R2_BUCKET}` : "off (no R2 settings)"}`);
