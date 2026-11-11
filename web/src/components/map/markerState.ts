@@ -1,4 +1,4 @@
-import { isDaylightHour, type Session, type Verdict } from "../../lib/session";
+import { isDaylightHour, type NowVerdict, type Session, type Verdict } from "../../lib/session";
 import { rideState, type Hour, type Spot } from "../../lib/wind";
 
 /**
@@ -8,7 +8,7 @@ import { rideState, type Hour, type Spot } from "../../lib/wind";
  *            inside a session
  *   soon     marginal: in range in daylight but too short a window to count (scrubbed hours only)
  *   strong   too strong (now, or at the shown hour)
- *   wrongdir the right speed from outside the spot's directions (at the shown hour)
+ *   wrongdir the right speed from outside the spot's directions (now by the spot's own sensor, or at the shown hour)
  *   off      nothing to ride today: next session another day (a calendar), too light, after dark, or no data yet
  */
 export type MarkerTone = "go" | "soon" | "strong" | "wrongdir" | "off";
@@ -29,14 +29,18 @@ const state = (tone: MarkerTone, word: string, glyph: MarkerGlyph, extra: Partia
   ({ tone, word, glyph, pulse: false, hollow: false, ...extra });
 
 /**
- * Now (at == null): the session engine's verdict, except that wind that is too strong right now is flagged as such,
- * even inside a forecast session (a live sensor reading over the spot's max must never read as a green "On now").
+ * Now (at == null): exactly what the spot's card says (`useSpotNow().pill`): the session engine's verdict, checked
+ * against the wind right now by the spot's own station only. A nearby sensor's number may sit in the marker, but it
+ * never changes the verdict, so the map and the board can't disagree.
  * Scrubbed (at != null): the shown forecast hour on its own terms, so the ring always matches the number beside it.
  */
-export function markerState(spot: Spot, shown: Pick<Hour, "speed" | "dir"> | null, opts: {
-  at: number | null; hour: Hour | null; verdict: Verdict | null; sessions: Session[];
+export function markerState(spot: Spot, _shown: Pick<Hour, "speed" | "dir"> | null, opts: {
+  at: number | null; hour: Hour | null; sessions: Session[];
+  /** The card's answer about now (`useSpotNow().pill`). Callers that only ask about a scrubbed hour may pass the plain `verdict`. */
+  pill?: NowVerdict | null; verdict?: Verdict | null;
 }): MarkerState {
-  const { at, hour, verdict, sessions } = opts;
+  const { at, hour, sessions } = opts;
+  const pill: Pick<NowVerdict, "state" | "label"> | null = opts.pill ?? opts.verdict ?? null;
   if (at != null) {
     if (!hour) return state("off", "no forecast for this hour", null);
     if (sessions.some((s) => hour.t >= s.start && hour.t < s.end + HOUR)) return state("go", "rideable", "check");
@@ -47,12 +51,14 @@ export function markerState(spot: Spot, shown: Pick<Hour, "speed" | "dir"> | nul
     // In range but not a session: after dark, or too short a window to count.
     return isDaylightHour(spot.lat, spot.lon, hour.t) ? state("soon", "short window", "short") : state("off", "after dark", null);
   }
-  if (!verdict) return state("off", "loading", null);
-  if (shown && rideState(shown.speed, spot) === "above") return state("strong", "Too strong now", "up");
-  if (verdict.state === "on") return state("go", verdict.label, "check", { pulse: true });
-  if (verdict.state === "today") return state("go", verdict.label, "clock", { hollow: true });
-  if (verdict.state === "upcoming") return state("off", verdict.label, "calendar");
-  return state("off", verdict.label, null);
+  if (!pill) return state("off", "loading", null);
+  if (pill.state === "strong") return state("strong", pill.label, "up");
+  if (pill.state === "wrongdir") return state("wrongdir", pill.label, "offdir");
+  if (pill.state === "light") return state("off", pill.label, null);
+  if (pill.state === "on") return state("go", pill.label, "check", { pulse: true });
+  if (pill.state === "today") return state("go", pill.label, "clock", { hollow: true });
+  if (pill.state === "upcoming") return state("off", pill.label, "calendar");
+  return state("off", pill.label, null);
 }
 
 /** Ring + pointer colour per tone (literal class names, so Tailwind sees them). */

@@ -25,7 +25,7 @@ import {
 } from "./lib/layout";
 import { useFreshness } from "./lib/freshness";
 import { duration, ease } from "./lib/motion";
-import { AtProvider, useHourNow } from "./lib/time";
+import { AtProvider, onAtRequest, useHourNow } from "./lib/time";
 import { areaStats, fieldAt, type Bounds, type Model, type Spot } from "./lib/wind";
 
 // Off the first-paint path: the map (maplibre is most of the JavaScript; the panel or sheet paints without it), the
@@ -65,6 +65,8 @@ export default function App() {
   // field refetches or the hour turns, and an index would quietly slide to a later hour.
   const [selectedAt, setSelectedAt] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
+  // Anything in the app may ask the one clock for another hour (a day in the board's week); the shell owns it.
+  useEffect(() => onAtRequest((t) => { setPlaying(false); setSelectedAt(t); }), []);
   // A spot card hovered or focused in the list: its marker is ringed and named on the map.
   const [hoverId, setHoverId] = useState<string | null>(null);
 

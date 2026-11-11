@@ -230,7 +230,7 @@ test("while the timeline points elsewhere, a card's verdict steps back and its r
   for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowRight");
   // tonight: too light, on the card and on the map, in the same word
   await expect(fds.getByTestId("spot-reading")).toHaveText(/^Today \d{1,2} PM\s*·\s*\d+ kn.*·\s*Too light$/);
-  await expect(page.locator('[data-spot-marker="seed-fort-de-soto"]')).toHaveAttribute("aria-label", /, too light$/);
+  await expect(page.locator('[data-spot-marker="fds"]')).toHaveAttribute("aria-label", /, too light$/);
   // the verdict is still about now, but neutral: nothing green next to a hour that isn't rideable
   await expect(pill).toHaveText("On now");
   await expect(pill).toHaveAttribute("data-muted", "true");
@@ -369,6 +369,22 @@ test("a nearby sensor is shown beside the verdict and never changes it", async (
   // the hero shows the reading for what it is: a nearby sensor's
   await expect(page.locator("aside").getByText(/^Nearby sensor · Middle Tampa Bay · 14 km/)).toBeVisible();
   await expect(page.locator("aside").getByText("· 6 kn under your 15, at the nearby sensor")).toBeVisible();
+});
+
+test("a nearby sensor over the range doesn't make the marker say \"Too strong now\": it matches the card", async ({ page }) => {
+  // Fort De Soto has no station of its own; Middle Tampa Bay, 14 km away, reads 40 kn while the forecast is on.
+  const now = tampaToday(13);
+  await page.clock.setFixedTime(now);
+  await seed(page, SEEDED);
+  await mockApis(page);
+  await stationReads(page, "8726412", now, { kn: 40 });
+  await page.goto("/");
+  const fds = cardOf(page, "Fort De Soto");
+  await expect(fds.getByTestId("spot-reading")).toHaveText(/^Nearby · 14 km\s*·\s*40 kn/);
+  await expect(fds.locator("[data-verdict]")).toHaveText("On now");
+  const marker = page.locator('[data-spot-marker="fds"]');
+  await expect(marker).toHaveAttribute("aria-label", /^Fort De Soto, \d+ knots, On now$/);
+  await expect(marker).toHaveAttribute("data-tone", "go");
 });
 
 test("a reading older than half an hour is never called live: it shows its age and leaves the verdict to the forecast", async ({ page }) => {

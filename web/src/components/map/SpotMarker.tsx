@@ -49,7 +49,7 @@ export const SpotMarker = memo(function SpotMarker({ spot, selected, highlighted
   const hours = live.fc.data?.hours ?? EMPTY;
   const hour = at != null ? nearestHour(hours, at) : null;
   const shown = at != null ? hour : live.now;
-  const state = markerState(spot, shown, { at, hour, verdict: live.verdict, sessions: live.sessions });
+  const state = markerState(spot, shown, { at, hour, pill: live.pill, sessions: live.sessions });
   const n = shown ? Math.round(shown.speed) : null;
   const Glyph = state.glyph ? GLYPH[state.glyph] : null;
   const name = n != null ? `${spot.name}, ${n} knots, ${state.word}` : spot.name;
