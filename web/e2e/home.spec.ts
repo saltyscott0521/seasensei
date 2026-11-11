@@ -230,7 +230,7 @@ test("while the timeline points elsewhere, a card's verdict steps back and its r
   for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowRight");
   // tonight: too light, on the card and on the map, in the same word
   await expect(fds.getByTestId("spot-reading")).toHaveText(/^Today \d{1,2} PM\s*·\s*\d+ kn.*·\s*Too light$/);
-  await expect(page.locator('[data-spot-marker="fds"]')).toHaveAttribute("aria-label", /, too light$/);
+  await expect(page.locator('[data-spot-marker="seed-fort-de-soto"]')).toHaveAttribute("aria-label", /, too light$/);
   // the verdict is still about now, but neutral: nothing green next to a hour that isn't rideable
   await expect(pill).toHaveText("On now");
   await expect(pill).toHaveAttribute("data-muted", "true");
