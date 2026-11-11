@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties } from "react";
+import { fmtRange } from "../../lib/sensei";
 import { fmtHour, isDaylightHour } from "../../lib/session";
 import { useNow } from "../../lib/time";
 import { compass, rideState, windColor, type Hour, type Spot } from "../../lib/wind";
@@ -38,7 +39,8 @@ function dayLabel(t: number, tz: string, now: number) {
 const dayKey = (t: number, tz: string) => dayKeyFmt(tz).formatToParts(t).filter((x) => x.type === "day" || x.type === "month").map((x) => x.value).join("-");
 
 /**
- * Every hour from now as a dense table: time, knots (wind-scale colour), gust, direction and a ride bar; night hours
+ * Every hour from now as a dense table: time, knots (wind-scale colour), the range each hour is likely to fall in
+ * (SeaSensei), gust, direction and a ride bar; night hours
  * shaded, day names stuck to the left edge. Scrolls sideways (the mouse wheel too, on desktop) and keeps the
  * highlighted hour (the charts' cursor, else the timeline's hour) in view.
  */
@@ -125,10 +127,11 @@ const HourTable = memo(function HourTable({ cols, tz, clock }: { cols: Col[]; tz
     if (!days.length || c.dayStart) days.push({ key: c.h.t, label: dayLabel(c.h.t, tz, clock), n: 0 });
     days[days.length - 1].n++;
   }
+  const ranged = cols.some((c) => c.h.lo != null && c.h.hi != null);
   const cell = (c: Col) => clsx("p-0", c.dayStart && "border-l border-line-strong", c.night && "bg-ink/35");
   return (
     <table className="table-fixed border-separate border-spacing-0 text-center" style={{ width: LABEL + cols.length * COL }}>
-      <caption className="sr-only">Hour by hour from now: wind and gust in knots, direction, and whether each hour is rideable</caption>
+      <caption className="sr-only">Hour by hour from now: wind{ranged ? ", the range it is likely to fall in," : ""} and gust in knots, direction, and whether each hour is rideable</caption>
       <colgroup>
         <col style={{ width: LABEL }} />
         {cols.map((c) => <col key={c.h.t} style={{ width: COL }} />)}
@@ -165,6 +168,12 @@ const HourTable = memo(function HourTable({ cols, tz, clock }: { cols: Col[]; tz
             </td>
           ))}
         </tr>
+        {ranged && (
+          <tr className="h-5" data-testid="range-row">
+            <th scope="row" className={clsx(STICKY, "pl-3 text-left text-micro font-medium text-fg-3")}>Likely</th>
+            {cols.map((c) => <td key={c.h.t} className={clsx(cell(c), "num whitespace-nowrap text-micro text-fg-3")}>{fmtRange(c.h) ?? ""}</td>)}
+          </tr>
+        )}
         <tr className="h-6">
           <th scope="row" className={clsx(STICKY, "pl-3 text-left text-micro font-medium text-fg-3")}>Gust</th>
           {cols.map((c) => <td key={c.h.t} className={clsx(cell(c), "num text-caption text-fg-2")}>{Math.round(c.h.gust)}</td>)}
@@ -218,7 +227,7 @@ function Placeholder() {
   return (
     <div className="flex flex-col gap-2" aria-hidden>
       <div className="flex min-h-6 items-center px-1"><Skeleton className="h-4 w-24" /></div>
-      <Skeleton className="h-[191px] rounded-lg" />
+      <Skeleton className="h-[211px] rounded-lg" />
     </div>
   );
 }

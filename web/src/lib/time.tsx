@@ -32,3 +32,19 @@ export const useNow = (): number => useSyncExternalStore(subscribeClock, minuteN
 
 /** Date.now() floored to the hour; re-renders the caller once an hour (the timeline's "now" moves on with it). */
 export const useHourNow = (): number => useSyncExternalStore(subscribeClock, hourNow);
+
+// Asking the one clock for another hour from anywhere in the app (a day in the week strip, say). The shell owns the
+// chosen hour, so it listens (`onAtRequest`) and the rest just ask; with nobody listening a request does nothing.
+const atListeners = new Set<(t: number | null) => void>();
+const wiredListeners = new Set<() => void>();
+/** Point the one clock at `t` (ms epoch), or back at now (null). */
+export const requestAt = (t: number | null) => atListeners.forEach((f) => f(t));
+/** The shell: `useEffect(() => onAtRequest(setSelectedAt), [])`. Returns the unsubscribe. */
+export function onAtRequest(f: (t: number | null) => void) {
+  atListeners.add(f);
+  wiredListeners.forEach((l) => l());
+  return () => { atListeners.delete(f); wiredListeners.forEach((l) => l()); };
+}
+/** Is anything listening for `requestAt`? (Controls that set the clock only offer to when it can be set.) */
+export const useCanSetAt = (): boolean =>
+  useSyncExternalStore((l) => (wiredListeners.add(l), () => wiredListeners.delete(l)), () => atListeners.size > 0);

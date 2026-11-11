@@ -26,7 +26,7 @@ function hourlyTimes(hrrrOnly = false) {
  * What a test can change about the stand-ins. `sea`: knots added to every model read with `cell_selection=sea` (the
  * spot requests for HRRR and ECMWF), so a test can make the sea cell windier than the land cell.
  */
-export type MockOptions = { sea?: number };
+export type MockOptions = { sea?: number; /** Every model's wind direction (FROM, degrees) instead of the default SW (225). */ dir?: number };
 
 function locationPayload(url: URL, lat: number, lon: number, i: number, opts: MockOptions) {
   const q = url.searchParams, hourly = q.get("hourly")!, models = (q.get("models") ?? "").split(",");
@@ -42,7 +42,7 @@ function locationPayload(url: URL, lat: number, lon: number, i: number, opts: Mo
   const sea = q.get("cell_selection") === "sea" ? opts.sea ?? 0 : 0;
   if (hourly.includes("wind_speed_10m")) add("wind_speed_10m", (t, m) => speedAt(t) + (bias[m] ?? 0) + sea);
   if (hourly.includes("wind_gusts_10m")) add("wind_gusts_10m", (t, m) => speedAt(t) + 4 + (bias[m] ?? 0) + sea);
-  if (hourly.includes("wind_direction_10m")) add("wind_direction_10m", () => dirAt());
+  if (hourly.includes("wind_direction_10m")) add("wind_direction_10m", () => opts.dir ?? dirAt());
   return { latitude: lat, longitude: lon, timezone: "America/New_York", utc_offset_seconds: -14400, hourly: out };
 }
 

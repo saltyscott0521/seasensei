@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mockApis } from "./mocks";
+import { calibrationFixture, mockApis } from "./mocks";
 
 // The spot detail, driven like a rider: the answer first, honest sources, sessions that move the charts,
 // the hour grid on the same clock as the timeline, settings that rename and close in layers.
@@ -30,8 +30,9 @@ test("the answer comes first: verdict, an honest source line, range chips, no co
   await expect(panel.getByText(/^Live · Old Port Tampa · 0\.\d km · (just now|\d+ min ago)$/)).toBeVisible();
   // how the wind sits in the rider's range, in words
   await expect(panel.getByText(/^(In range|Too light|Too strong|Wrong direction)$/).first()).toBeVisible();
-  // the charts card says how well the models agree over the next two days
-  await expect(page.getByRole("region", { name: "Charts" }).getByRole("img", { name: /^(Models agree|Some disagreement|Models disagree) · \d+ kn spread$/ })).toBeVisible();
+  // how sure is said in plain words (below); nothing here talks about model spread
+  await expect(panel.getByRole("button", { name: "How sure is this?" })).toBeVisible();
+  await expect(panel.getByText(/kn spread/)).toHaveCount(0);
 
   await page.getByRole("button", { name: "Spot settings" }).click();
   await expect(panel.getByText("27.853° N, 82.552° W")).toBeVisible();
@@ -262,4 +263,131 @@ test("back closes the full-screen charts, then the settings, and only then the s
   await page.getByRole("button", { name: "Back to spots" }).click();
   await expect(settings).toBeHidden();
   await expect(page).not.toHaveURL(/spot=/);
+});
+
+/* ---------- Chance and range in plain words ---------- */
+
+test("sessions, the hero and the hour grid give a range and a chance in plain words; \"How sure is this?\" explains them", async ({ page }) => {
+  await openSpot(page, "Fort De Soto");
+  const panel = page.locator("aside");
+  // every session: the likely range, then one of three words (in its name too)
+  const sessions = page.getByRole("button", { name: /Show on the charts$/ });
+  await expect(sessions.first()).toBeVisible();
+  for (const row of await sessions.all()) {
+    await expect(row).toHaveAccessibleName(/, \d+–\d+ kn SW, (likely|possible|unlikely)[,.]/);
+    await expect(row.getByTestId("chance")).toHaveText(/^(Likely|Possible|Unlikely)$/);
+  }
+  await expect(panel.getByText(/spread|confidence|Models (agree|disagree)/)).toHaveCount(0);
+
+  // the hour grid has the range under each hour's speed
+  const range = hourTable(page).getByRole("row", { name: /^Likely/ });
+  const cells = await range.getByRole("cell").allTextContents();
+  expect(cells.length).toBeGreaterThan(100);
+  for (const c of cells.slice(0, 48)) expect(c).toMatch(/^\d+–\d+$/);
+
+  // a forecast hour in the hero: its speed inside the range it is likely to fall in
+  const slider = page.getByRole("slider", { name: "Forecast time" });
+  await slider.focus();
+  for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
+  const likely = panel.getByTestId("hero-range");
+  await expect(likely).toHaveText(/^likely \d+–\d+ kn · $/);
+  const [, lo, hi] = (await likely.textContent())!.match(/(\d+)–(\d+)/)!.map(Number);
+  expect(hi).toBeGreaterThan(lo);
+  await page.getByRole("button", { name: "Back to now" }).click();
+
+  // one tap explains it, without jargon; no track record until the server has scored one
+  const how = panel.getByRole("button", { name: "How sure is this?" });
+  await expect(how).toHaveAttribute("aria-expanded", "false");
+  await how.click();
+  const text = panel.getByTestId("how-sure");
+  await expect(text).toContainText("is where the wind lands about 8 times in 10");
+  await expect(text).toContainText(/Likely means the wind reaches your minimum for the session at least 7 times in 10/);
+  await expect(text).not.toContainText(/quantile|MAE|calibrat|nowcast|percentile/i);
+  await expect(panel.getByTestId("track-record")).toHaveCount(0);
+  await how.click();
+  await expect(text).toHaveCount(0);
+});
+
+test("\"How sure is this?\" gives the 30-day track record once the server has one; a raw model has nothing to explain", async ({ page }) => {
+  await page.route("**/api/calibration", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({
+    ...calibrationFixture(),
+    score: { days: 30, models: { sensei: { mae: 1.8, n: 4100 }, hrrr: { mae: 2.4, n: 4100 }, nbm: { mae: 2.1, n: 4000 } } },
+  }) }));
+  await page.reload();
+  await openSpot(page, "Skyway");
+  const panel = page.locator("aside");
+  await panel.getByRole("button", { name: "How sure is this?" }).click();
+  await expect(panel.getByTestId("track-record")).toHaveText("Last 30 days: off by 1.8 kn on average; HRRR alone 2.4.");
+
+  // a raw model: no range, no chance, so no explanation; its sessions keep the models' agreement
+  await page.getByRole("combobox", { name: "Forecast model" }).selectOption("hrrr");
+  await expect(panel.getByRole("button", { name: "How sure is this?" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Show on the charts$/ }).first()).toHaveAccessibleName(/confidence, \d+ kn spread/);
+});
+
+/* ---------- The week at a glance, in the spot ---------- */
+
+test("the spot's week at a glance: seven days with window, range and chance; picking a day shows it", async ({ page }) => {
+  await openSpot(page, "Fort De Soto");
+  const strip = page.getByTestId("week-strip");
+  const days = strip.getByRole("button");
+  await expect(days).toHaveCount(7);
+  await expect(days.first()).toHaveAccessibleName(/^Today: /);
+  // the mock wind is rideable every day ahead
+  for (const i of [1, 3, 6]) {
+    await expect(days.nth(i)).toHaveAccessibleName(/^[A-Z][a-z]{2}: \d{1,2}( AM)?–\d{1,2} PM, \d+–\d+ kn SW, (likely|possible|unlikely).*\. Show that day$/);
+    await expect(days.nth(i)).toHaveAttribute("data-state", "go");
+    await expect(days.nth(i)).toContainText(/(Likely|Possible|Unlikely)$/);
+  }
+  const day = days.nth(3);
+  const label = (await day.getAttribute("aria-label"))!.slice(0, 3);
+  await day.click();
+  await expect(day).toHaveAttribute("aria-pressed", "true");
+  // the hero and the hour grid are on that day
+  await expect(page.locator("aside").getByText(new RegExp(`^${label} \\d+ (AM|PM) · SeaSensei forecast$`))).toBeVisible();
+  await expect(hourTable(page).locator('th[aria-current="time"]')).toHaveCount(1);
+  if (await strip.getAttribute("data-clock")) {
+    // … and so is the one clock: the timeline says the same day, at the session's start
+    await expect(page.locator("aside").getByText(new RegExp(`^${label} \\d+ AM · SeaSensei forecast$`))).toBeVisible();
+    await page.getByRole("button", { name: "Back to now" }).click();
+    await expect(day).toHaveAttribute("aria-pressed", "false");
+  }
+});
+
+/* ---------- Shore-relative direction ---------- */
+
+test("where the coast can tell, the wind is named against the shore, and offshore sessions carry a caution but stay listed", async ({ page }) => {
+  // Fort De Soto faces the Gulf (WSW). The default mock wind is SW: onshore, nothing to warn about.
+  await openSpot(page, "Fort De Soto");
+  const panel = page.locator("aside");
+  await expect(panel.getByTestId("shore")).toHaveText(" · onshore");
+  await expect(panel.getByTestId("offshore")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Show on the charts$/ }).first()).toHaveAccessibleName(/, onshore/);
+  await expect(panel.getByText("Offshore", { exact: true })).toHaveCount(0);
+  // Skyway's pin has no coastline in the saved tiles: nothing is claimed
+  await page.getByRole("button", { name: "Back to spots" }).click();
+  await openSpot(page, "Skyway");
+  await expect(panel.getByText(/gusting \d+ · from SW$/)).toBeVisible();
+  await expect(panel.getByTestId("shore")).toHaveCount(0);
+
+  // The same beach in an ENE wind: off the land
+  await mockApis(page, { dir: 70 });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
+  await page.getByRole("button", { name: "Back to spots" }).click();
+  await openSpot(page, "Fort De Soto");
+  const slider = page.getByRole("slider", { name: "Forecast time" }); // a forecast hour (the sensors still read SW)
+  await slider.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(panel.getByTestId("shore")).toHaveText(" · offshore");
+  await expect(panel.getByTestId("offshore")).toHaveText("Offshore: wind blows out to sea");
+  // the sessions are still there (a caution, not a filter), each tagged in sight and in its name
+  const sessions = page.getByRole("button", { name: /Show on the charts$/ });
+  expect(await sessions.count()).toBeGreaterThanOrEqual(4);
+  for (const row of await sessions.all()) {
+    await expect(row).toHaveAccessibleName(/, offshore[,.]/);
+    await expect(row.getByText("Offshore", { exact: true })).toBeVisible();
+  }
+  await expect(panel.getByTestId("offshore-note")).toContainText("Offshore: wind blows out to sea");
+  await expect(page.getByTestId("week-strip").getByRole("button").nth(2)).toHaveAccessibleName(/, offshore\. Show that day$/);
 });

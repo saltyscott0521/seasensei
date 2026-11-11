@@ -112,3 +112,27 @@ test("phone 320×568: the discussion's header keeps its date controls and never 
   expect(cut).toBe(false);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
 });
+
+test("phone: every card says how likely its session is, and the week at a glance is there too, in thumb-sized rows", async ({ page }) => {
+  await page.clock.install({ time: tampaToday(9) });
+  await mockApis(page);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible();
+  const cards = page.getByRole("list", { name: "Your spots, best first" }).getByRole("listitem");
+  await expect(cards).toHaveCount(3);
+  for (const c of await cards.all()) {
+    await expect(c.getByTestId("chance").locator("visible=true")).toHaveText(/^(Likely|Possible|Unlikely)$/);
+    expect((await c.boundingBox())!.height).toBeLessThanOrEqual(104); // still two cards in the resting sheet
+  }
+  await raiseSheet(page);
+  const week = page.getByTestId("week-board");
+  await week.scrollIntoViewIfNeeded();
+  const rows = week.getByRole("listitem");
+  await expect(rows).toHaveCount(7);
+  await expect(rows.first()).toContainText(/^Today/);
+  for (const r of await rows.all()) {
+    await expect(r).toContainText(/(Likely|Possible|Unlikely)$/);
+    expect((await r.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+});

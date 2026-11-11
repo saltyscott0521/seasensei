@@ -62,3 +62,31 @@ test("phone: the back gesture closes the full-screen charts and keeps the spot o
   await expect(page).toHaveURL(/spot=seed-fort-de-soto/);
   await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
 });
+
+test("phone: the week at a glance is on the spot too, its days scroll sideways and a tap shows that day", async ({ page }) => {
+  await mockApis(page);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible();
+  await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click();
+  await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
+  const sheet = page.locator("[data-vaul-drawer]");
+  const strip = sheet.getByTestId("week-strip");
+  await strip.scrollIntoViewIfNeeded();
+  const days = strip.getByRole("button");
+  await expect(days).toHaveCount(7);
+  await expect(days.nth(1)).toHaveAccessibleName(/^[A-Z][a-z]{2}: \d{1,2}( AM)?–\d{1,2} PM, \d+–\d+ kn SW, (likely|possible|unlikely)/);
+  for (const d of await days.all()) {
+    const b = (await d.boundingBox())!;
+    expect(Math.min(b.width, b.height)).toBeGreaterThanOrEqual(44);
+  }
+  // the seventh day is off to the right: the strip scrolls, the page doesn't
+  expect(await strip.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+  const day = days.nth(2);
+  const label = (await day.getAttribute("aria-label"))!.slice(0, 3);
+  await day.tap();
+  await expect(day).toHaveAttribute("aria-pressed", "true");
+  await expect(sheet.getByText(new RegExp(`^${label} \\d+ (AM|PM) · SeaSensei forecast$`))).toBeVisible();
+  // sessions say how likely they are here as well
+  await expect(sheet.getByRole("button", { name: /Show on the charts$/ }).first().getByTestId("chance")).toHaveText(/^(Likely|Possible|Unlikely)$/);
+});
