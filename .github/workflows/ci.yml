@@ -1,0 +1,71 @@
+name: Web
+
+# Checks only. Nothing here deploys or holds a deploy back: Coolify redeploys from main by itself, whatever this says.
+# A red run on main means "look now", not "the site is down".
+on:
+  push:
+    paths: ["web/**", ".github/workflows/ci.yml"]
+  pull_request:
+    paths: ["web/**", ".github/workflows/ci.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: web
+
+jobs:
+  # Fast: types and the production build, the unit tests, and the real Node server against stand-in upstreams
+  # (no browser needed). A couple of minutes.
+  check:
+    name: Build, unit tests, server
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            web/server/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: web/server
+      - run: npm run build
+      - run: npm test
+      - name: Server end to end
+        run: npx playwright test --project=server --trace off
+
+  # Slow: the whole app in a browser (software WebGL), desktop and phone, every network call mocked.
+  browser:
+    name: Browser end to end (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [desktop, phone]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: End to end
+        run: npx playwright test --project=${{ matrix.project }} --trace off --workers=2
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-${{ matrix.project }}
+          path: web/test-results
+          retention-days: 7
