@@ -150,12 +150,24 @@ function MapSetup({ apiRef, padding }: { apiRef?: RefObject<MapApi | null>; padd
   useEffect(() => {
     const map = current?.getMap();
     if (!map) return;
+    if (import.meta.env.DEV) (window as unknown as { __map?: unknown }).__map = map; // for tests and tools/shots
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();
     // The canvas takes keyboard focus (arrows pan, +/− zoom). The app's focus ring sits outside an element, where the
     // map would clip it; draw it inside the canvas instead.
     map.getCanvas().classList.add("focus-visible:-outline-offset-2");
     const tune = () => tuneBasemap(map);
+    // MapLibre opens the credits as soon as the sources name them and keeps them open until the first drag: a
+    // full-width strip over a phone's small map. Start as the small "i" instead (one tap away, as OpenStreetMap
+    // asks); after this first time it opens and closes as usual.
+    const collapseCredits = () => {
+      const credits = map.getContainer().querySelector(".maplibregl-ctrl-attrib.maplibregl-compact-show");
+      if (!credits) return;
+      credits.classList.remove("maplibregl-compact-show");
+      credits.removeAttribute("open");
+      map.off("sourcedata", collapseCredits);
+    };
+    map.on("sourcedata", collapseCredits);
     map.on("style.load", tune);
     try { if (map.getStyle()?.layers?.length) tune(); } catch { /* style not parsed yet: style.load will tune it */ }
     if (apiRef) {
@@ -176,6 +188,7 @@ function MapSetup({ apiRef, padding }: { apiRef?: RefObject<MapApi | null>; padd
     }
     return () => {
       map.off("style.load", tune);
+      map.off("sourcedata", collapseCredits);
       if (apiRef) (apiRef as { current: MapApi | null }).current = null;
     };
   }, [current, apiRef]);

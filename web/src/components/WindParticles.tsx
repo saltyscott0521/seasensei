@@ -9,13 +9,25 @@ export type Inset = { top: number; right: number; bottom: number; left: number }
 
 const MAX_DPR = 1.5;
 const MAX_PARTICLES = 1600;
-const AREA_PER_PARTICLE = 900; // px² of visible map per particle
+// px² of visible map per particle. Sparse on purpose: a few long ribbons read as wind, a dense field of short
+// streaks reads as rain. Phones get fewer still (smaller map, weaker GPU, battery).
+const AREA_PER_PARTICLE = 1500;
+const AREA_PER_PARTICLE_PHONE = 2400;
 const SPEED_K = 0.15; // px per knot per 60 Hz frame
-const FADE = 0.08; // share of the trail that fades per 60 Hz frame
-const ALPHA = 0.55; // calmer than full strength, so markers and labels stay legible over the field
-const LINE_W = 1.15;
+// Share of the trail that fades per 60 Hz frame. A trail is about 1 / FADE frames long, so its length follows the
+// speed: ~20 px at 5 kn, ~85 px at 20 kn. The fade is painted every other frame (see step) so that an 8-bit canvas
+// can still round faint trails down to nothing instead of leaving a haze.
+const FADE = 0.035;
+const LIFE_MIN = 110, LIFE_MAX = 250; // 60 Hz frames: about 2–4 s, long enough to follow a bend in the flow
 const BUCKET_KN = 2; // colour buckets: one stroke() per bucket per frame instead of one per particle
 const BUCKETS = 25; // 0–50 kn
+/** How bright the wind is drawn, 0–1 by speed: a light breeze is a whisper, 20 kn and up is plain to see. */
+const bright = (kn: number) => Math.max(0, Math.min(1, (kn - 3) / 19));
+/** Stroke alpha: the wind scale's colour at low opacity, so markers and labels stay legible over the field. */
+const alphaFor = (kn: number) => 0.1 + 0.46 * bright(kn);
+const widthFor = (kn: number) => 1 + 0.55 * Math.max(0, Math.min(1, (kn - 12) / 12));
+/** Share of particles drawn at a speed: light air is nearly empty, from 14 kn up every particle shows. */
+const shown = (kn: number) => Math.max(0.12, Math.min(1, kn / 14));
 // Reduced motion: a still field of short streamlines, redrawn only when the view or the hour changes.
 const STATIC_CELL = 52; // px between streamline seeds
 const STATIC_STEPS = 12; // at most; each line gets 7–12 steps, so they don't line up like hatching
@@ -25,7 +37,9 @@ const STATIC_ALPHA = 0.42;
 /**
  * Wind streamlines over the map (the "earth.nullschool" look), drawn on a canvas that sits between the basemap and
  * the markers. Particles live in screen space in typed arrays and are advected by the bilinearly sampled field,
- * leaving fading trails. When the camera moves the trails move with it (shifted and scaled, never wiped). Their
+ * leaving long fading trails. Speed is legible three ways: a faster wind draws a longer trail, a brighter and
+ * slightly thicker one, and more of them (light air is left nearly empty); the colour is the wind scale's.
+ * When the camera moves the trails move with it (shifted and scaled, never wiped). Their
  * number follows the visible map area, the canvas is capped at 1.5× DPR, and the loop stops while the tab is hidden
  * or the map is covered (`paused`: the last frame stays on the canvas, so nothing flashes when it is uncovered).
  * Under prefers-reduced-motion it draws a still field instead of animating.
@@ -76,11 +90,15 @@ function createEngine(map: MapLibreMap, o: {
   const AGE = new Float32Array(MAX_PARTICLES), LIFE = new Float32Array(MAX_PARTICLES);
   const X0 = new Float32Array(MAX_PARTICLES), Y0 = new Float32Array(MAX_PARTICLES);
   const BK = new Int16Array(MAX_PARTICLES);
+  const PACE = new Float32Array(MAX_PARTICLES); // each particle's own pace (±12%), so neighbours don't march in step
+  const SHOW = new Uint8Array(MAX_PARTICLES); // 0: sitting this life out (light air draws fewer particles)
   const ORDER = new Uint16Array(MAX_PARTICLES);
   const COUNT = new Int32Array(BUCKETS * 2), START = new Int32Array(BUCKETS * 2);
   let n = 0;
-  // Stroke colour per bucket: a young and a settled alpha for each 2 kn band of the wind scale, built once.
-  const COLORS = Array.from({ length: BUCKETS * 2 }, (_, b) => windColor((Math.floor(b / 2) + 0.5) * BUCKET_KN, b % 2 ? ALPHA : ALPHA * 0.45));
+  // Stroke colour and width per bucket: a young and a settled alpha for each 2 kn band of the wind scale, built once.
+  const knOf = (b: number) => (Math.floor(b / 2) + 0.5) * BUCKET_KN;
+  const COLORS = Array.from({ length: BUCKETS * 2 }, (_, b) => windColor(knOf(b), alphaFor(knOf(b)) * (b % 2 ? 1 : 0.4)));
+  const WIDTHS = Array.from({ length: BUCKETS * 2 }, (_, b) => widthFor(knOf(b)));
 
   // The grid, flattened, and its corners in screen px (recomputed when the camera or the grid changes).
   let nr = 0, nc = 0, GU = new Float32Array(0), GV = new Float32Array(0);
@@ -122,11 +140,14 @@ function createEngine(map: MapLibreMap, o: {
     by0 = Math.max(0, ins.top); by1 = Math.min(h, h - ins.bottom);
     if (bx1 - bx0 < 48 || by1 - by0 < 48) { bx0 = 0; by0 = 0; bx1 = w; by1 = h; } // nothing sensible left: use it all
   };
-  const target = () => Math.max(60, Math.min(MAX_PARTICLES, Math.round(((bx1 - bx0) * (by1 - by0)) / AREA_PER_PARTICLE)));
+  const target = () => Math.max(60, Math.min(MAX_PARTICLES, Math.round(((bx1 - bx0) * (by1 - by0)) / (coarse ? AREA_PER_PARTICLE_PHONE : AREA_PER_PARTICLE))));
   const spawn = (i: number, settled: boolean) => {
     X[i] = bx0 + Math.random() * (bx1 - bx0);
     Y[i] = by0 + Math.random() * (by1 - by0);
-    LIFE[i] = 40 + Math.random() * 80;
+    PACE[i] = 0.88 + Math.random() * 0.24;
+    // Drawn or not, by the wind where it lands: a particle that sits out comes back soon, somewhere else.
+    if (nr) { sample(X[i], Y[i]); SHOW[i] = Math.random() < shown(Math.sqrt(su * su + sv * sv)) ? 1 : 0; } else SHOW[i] = 1;
+    LIFE[i] = SHOW[i] ? LIFE_MIN + Math.random() * (LIFE_MAX - LIFE_MIN) : 20 + Math.random() * 40;
     AGE[i] = settled ? Math.random() * LIFE[i] : 0; // staggered ages: the field never fades in all at once
   };
   const fill = (settled: boolean) => {
@@ -136,21 +157,30 @@ function createEngine(map: MapLibreMap, o: {
   };
 
   // ── Animated field ──
+  let owed = 0; // fade not yet painted, in 60 Hz frames
   const step = (dt: number) => {
-    ctx.globalCompositeOperation = "destination-out";
-    ctx.fillStyle = `rgba(0,0,0,${1 - (1 - FADE) ** dt})`;
-    ctx.fillRect(0, 0, w, h);
-    ctx.globalCompositeOperation = "source-over";
+    // Fade the trails. Painted once two frames' worth is owed: one stronger pass rounds a faint trail away, where
+    // many weak ones would leave it stuck a few levels above clear.
+    owed += dt;
+    if (owed >= 2) {
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.fillStyle = `rgba(0,0,0,${1 - (1 - FADE) ** owed})`;
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = "source-over";
+      owed = 0;
+    }
     if (!nr) return;
     const k = SPEED_K * dt;
     COUNT.fill(0);
     for (let i = 0; i < n; i++) {
       const x = X[i], y = Y[i];
       sample(x, y);
-      const nx = x + su * k, ny = y - sv * k;
+      const nx = x + su * k * PACE[i], ny = y - sv * k * PACE[i];
       AGE[i] += dt;
       if (AGE[i] > LIFE[i] || nx < -8 || ny < -8 || nx > w + 8 || ny > h + 8) { spawn(i, false); BK[i] = -1; continue; }
-      const b = Math.min(BUCKETS - 1, (Math.sqrt(su * su + sv * sv) / BUCKET_KN) | 0) * 2 + (AGE[i] < 8 ? 0 : 1);
+      if (!SHOW[i]) { BK[i] = -1; continue; }
+      // Young particles and those about to go are fainter: trails grow in and let go instead of popping.
+      const b = Math.min(BUCKETS - 1, (Math.sqrt(su * su + sv * sv) / BUCKET_KN) | 0) * 2 + (AGE[i] < 10 || LIFE[i] - AGE[i] < 14 ? 0 : 1);
       BK[i] = b; COUNT[b]++;
       X0[i] = x; Y0[i] = y; X[i] = nx; Y[i] = ny;
     }
@@ -158,13 +188,13 @@ function createEngine(map: MapLibreMap, o: {
     let acc = 0;
     for (let b = 0; b < COUNT.length; b++) { START[b] = acc; acc += COUNT[b]; }
     for (let i = 0; i < n; i++) { const b = BK[i]; if (b >= 0) ORDER[START[b]++] = i; }
-    ctx.lineWidth = LINE_W;
     ctx.lineCap = "round";
     let p = 0;
     for (let b = 0; b < COUNT.length; b++) {
       const c = COUNT[b];
       if (!c) continue;
       ctx.strokeStyle = COLORS[b];
+      ctx.lineWidth = WIDTHS[b];
       ctx.beginPath();
       for (const end = p + c; p < end; p++) { const i = ORDER[p]; ctx.moveTo(X0[i], Y0[i]); ctx.lineTo(X[i], Y[i]); }
       ctx.stroke();
@@ -194,7 +224,6 @@ function createEngine(map: MapLibreMap, o: {
     const origin = map.project([0, 0]);
     const c0 = Math.floor((bx0 - origin.x) / STATIC_CELL), c1 = Math.ceil((bx1 - origin.x) / STATIC_CELL);
     const r0 = Math.floor((by0 - origin.y) / STATIC_CELL), r1 = Math.ceil((by1 - origin.y) / STATIC_CELL);
-    ctx.lineWidth = LINE_W + 0.15;
     ctx.lineCap = "round";
     for (let r = r0; r < r1; r++) for (let c = c0; c < c1; c++) {
       let x = origin.x + (c + 0.1 + 0.8 * hash(c, r)) * STATIC_CELL;
@@ -203,7 +232,10 @@ function createEngine(map: MapLibreMap, o: {
       for (let s = 0; s < steps; s++) {
         sample(x, y);
         const nx = x + su * STATIC_K, ny = y - sv * STATIC_K;
-        ctx.strokeStyle = windColor(Math.sqrt(su * su + sv * sv), (STATIC_ALPHA * (s + 1)) / steps); // faint tail, bright head
+        const kn = Math.sqrt(su * su + sv * sv);
+        // faint tail, bright head; a stronger wind is drawn brighter and a touch thicker (its line is longer already)
+        ctx.strokeStyle = windColor(kn, STATIC_ALPHA * (0.6 + 0.4 * bright(kn)) * (0.3 + (0.7 * (s + 1)) / steps));
+        ctx.lineWidth = widthFor(kn) + 0.15;
         ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(nx, ny); ctx.stroke();
         x = nx; y = ny;
       }
