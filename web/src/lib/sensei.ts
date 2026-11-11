@@ -1,6 +1,6 @@
 // The SeaSensei forecast: every raw model, tuned to local sensors, blended by how well each has been doing, bent
 // toward a live reading, with a range. Pure like wind.ts: no DOM, no fetch, no React.
-import { distanceKm, RAW_MODELS, type Hour, type ModelSeries, type RawModel, type Spot, type Window } from "./wind";
+import { RAW_MODELS, type Hour, type ModelSeries, type RawModel, type Spot, type Window } from "./wind";
 
 const HOUR = 3600e3, RAD = Math.PI / 180;
 
@@ -29,7 +29,10 @@ export type Calibration = {
 const IDENTITY: [number, number][] = [[0, 0], [35, 35]];
 const builtin = (mae: number[], gf: number): ModelCal => ({ n: 0, qm: IDENTITY, mae, gf });
 
-/** What the browser uses when /api/calibration is unavailable: the models as they are, weighted by typical skill. */
+/**
+ * What the browser uses when /api/calibration is unavailable: the models as they are, weighted by typical skill.
+ * Keep in step with the pooled values, residual and nowcast in web/server/calibration-seed.json.
+ */
 export const FALLBACK_CALIBRATION: Calibration = {
   version: 1,
   updated: "",
@@ -38,15 +41,15 @@ export const FALLBACK_CALIBRATION: Calibration = {
   stations: [],
   pooled: {
     models: {
-      hrrr: builtin([1.9, 2.4, 2.8, 3.2], 1.3),
-      rrfs: builtin([2.0, 2.5, 2.9, 3.3], 1.3),
-      nbm: builtin([2.0, 2.3, 2.6, 3.0], 1.3),
-      ecmwf: builtin([2.3, 2.5, 2.7, 3.0], 1.35),
-      gfs: builtin([2.4, 2.7, 3.0, 3.3], 1.35),
+      hrrr: builtin([1.84, 2.41, 2.99, 3.44], 1.43),
+      rrfs: builtin([2.05, 2.25, 2.52, 2.73], 1.43),
+      nbm: builtin([2.05, 2.1, 2.19, 2.42], 1.43),
+      ecmwf: builtin([2.72, 2.83, 2.93, 3.23], 1.43),
+      gfs: builtin([2.77, 2.88, 2.99, 3.29], 1.43),
     },
   },
-  residual: { q10: [-2.4, -3.2, -3.8, -4.5], q90: [2.6, 3.4, 4.0, 4.8] },
-  nowcast: { tauHours: 3, maxHours: 6 },
+  residual: { q10: [-3.7, -4.53, -5.17, -5.68], q90: [3.11, 3.14, 3.31, 3.64] },
+  nowcast: { tauHours: 2, maxHours: 6 },
   score: null,
 };
 
@@ -108,35 +111,32 @@ export function clampCorrection(raw: number, tuned: number) {
   return Math.max(0, raw + Math.min(cap, Math.max(-cap, tuned - raw)));
 }
 
-export const STATION_MAX_KM = 25, STATION_SCALE_KM = 12;
-
-/** The sensor a spot is tuned to: the nearest on the water or shore within 25 km; an airport only when there is none. */
-export function nearestCalStation(cal: Calibration, spot: Pick<Spot, "lat" | "lon">) {
-  const near = cal.stations
-    .map((s) => ({ station: s, km: distanceKm(spot.lat, spot.lon, s.lat, s.lon) }))
-    .filter((s) => s.km <= STATION_MAX_KM)
-    .sort((a, b) => a.km - b.km);
-  return near.find((s) => s.station.kind !== "airport") ?? near[0] ?? null;
+/**
+ * The calibration station that is the spot's own chosen station, if any. The file's ids carry their network
+ * ("coops:8726607", "asos:KSPG"); a spot stores the bare id ("8726607"). "none" and auto (no station) match nothing.
+ */
+export function ownCalStation(cal: Calibration, spot: Pick<Spot, "station">) {
+  const id = spot.station;
+  if (!id || id === "none") return null;
+  return cal.stations.find((s) => s.id === id || s.id.slice(s.id.indexOf(":") + 1) === id) ?? null;
 }
 
-/** One model's tuning at a spot: its speed map (station blended toward pooled by distance, clamped), miss and gust factor. */
+/** One model's tuning at a spot: its speed map (clamped), its average miss per lead bucket and its gust factor. */
 export type SpotModelCal = { tune: (raw: number) => number; mae: number[]; gf: number };
-export type SpotCal = { station: CalStation | null; km: number | null; w: number; models: Record<RawModel, SpotModelCal> };
+export type SpotCal = { station: CalStation | null; models: Record<RawModel, SpotModelCal> };
 
-export function spotCalibration(cal: Calibration, spot: Pick<Spot, "lat" | "lon">): SpotCal {
-  const near = nearestCalStation(cal, spot);
-  const w = near ? Math.exp(-near.km / STATION_SCALE_KM) : 0;
+/**
+ * A station's map (and its miss and gust factor) is used only when it is the spot's own station: a neighbour's map
+ * did worse than no map at every station left out of the backtest. Every other spot uses the pooled values.
+ */
+export function spotCalibration(cal: Calibration, spot: Pick<Spot, "station">): SpotCal {
+  const station = ownCalStation(cal, spot);
   const models = {} as Record<RawModel, SpotModelCal>;
   for (const m of RAW_MODELS) {
-    const p = cal.pooled.models[m], s = near?.station.models[m];
-    const ws = s ? w : 0, mix = (a: number, b: number) => ws * a + (1 - ws) * b;
-    models[m] = {
-      tune: (raw) => clampCorrection(raw, s ? mix(quantileMap(s.qm, raw), quantileMap(p.qm, raw)) : quantileMap(p.qm, raw)),
-      mae: p.mae.map((v, i) => (s ? mix(s.mae[i] ?? v, v) : v)),
-      gf: s ? mix(s.gf, p.gf) : p.gf,
-    };
+    const c = station?.models[m] ?? cal.pooled.models[m];
+    models[m] = { tune: (raw) => clampCorrection(raw, quantileMap(c.qm, raw)), mae: c.mae, gf: c.gf };
   }
-  return { station: near?.station ?? null, km: near?.km ?? null, w, models };
+  return { station, models };
 }
 
 /* ---------- Step 3: the blend ---------- */
@@ -151,13 +151,13 @@ export function leadBucket(leadBuckets: number[], hoursAhead: number) {
 export type BlendInput = { speed: number; ratio: number; dir: number | null; mae: number };
 
 /**
- * Weights ∝ 1 / mae² over the models that have a value, so a missing model just drops out and the rest carry on
+ * Weights ∝ 1 / mae⁴ over the models that have a value, so a missing model just drops out and the rest carry on
  * (no hard handoffs). Speed is the weighted mean, direction the weighted circular mean (350° and 10° give 0°), gust
  * the blended speed times the weighted mean gust ratio, never under the speed.
  */
 export function blend(inputs: BlendInput[]): { speed: number; gust: number; dir: number; min: number; max: number } | null {
   if (!inputs.length) return null;
-  const ws = inputs.map((x) => 1 / (x.mae * x.mae));
+  const ws = inputs.map((x) => 1 / x.mae ** 4);
   const sum = ws.reduce((a, b) => a + b, 0);
   let speed = 0, ratio = 0, u = 0, v = 0, wd = 0;
   inputs.forEach((x, i) => {
@@ -181,7 +181,7 @@ const SPREAD_COVER = 0.6;
  * The SeaSensei hours for a spot from whatever models arrived: each tuned (step 2), blended (3), with a range (5).
  * Hours no model covers are left out. `now` sets each hour's lead.
  */
-export function buildSensei(series: ModelSeries, cal: Calibration, spot: Pick<Spot, "lat" | "lon">, now = Date.now()): Hour[] {
+export function buildSensei(series: ModelSeries, cal: Calibration, spot: Pick<Spot, "station">, now = Date.now()): Hour[] {
   const sc = spotCalibration(cal, spot);
   const have = RAW_MODELS.filter((m) => series.models[m]);
   const out: Hour[] = [];
@@ -192,8 +192,9 @@ export function buildSensei(series: ModelSeries, cal: Calibration, spot: Pick<Sp
       const s = series.models[m]!, raw = s.speed[i], c = sc.models[m];
       if (raw == null) continue;
       const g = s.gust[i];
-      // A model's own gustiness; with no gust (or next to no wind, where the ratio means nothing) its usual factor.
-      const ratio = g != null && raw >= 1 ? Math.min(3, Math.max(1, g / raw)) : c.gf;
+      // Tuned to the spot's own station: that station's gust factor. Otherwise the model's own gustiness; with no
+      // gust (or next to no wind, where the ratio means nothing) its usual factor.
+      const ratio = !sc.station && g != null && raw >= 1 ? Math.min(3, Math.max(1, g / raw)) : c.gf;
       inputs.push({ speed: c.tune(raw), ratio, dir: s.dir[i] ?? null, mae: c.mae[b] });
     }
     const x = blend(inputs);
@@ -207,13 +208,12 @@ export function buildSensei(series: ModelSeries, cal: Calibration, spot: Pick<Sp
 
 /* ---------- Step 4: the nowcast ---------- */
 
-/** A reading this fresh, from the spot's own station or a sensor this near, bends the next hours. */
-export const NOWCAST_FRESH_MS = 30 * 60_000, NOWCAST_NEARBY_KM = 8;
+/** A reading this fresh from the spot's own station bends the next hours. */
+export const NOWCAST_FRESH_MS = 30 * 60_000;
 
-/** Does this sensor reading qualify? (`kind`: the spot's own station, or a nearby one with its distance.) */
-export function nowcastQualifies(sensor: { kind: "station" | "nearby"; t: number; km: number | null } | null | undefined, now = Date.now()) {
-  if (!sensor || now - sensor.t > NOWCAST_FRESH_MS) return false;
-  return sensor.kind === "station" || (sensor.km != null && sensor.km <= NOWCAST_NEARBY_KM);
+/** Does this sensor reading qualify? Only the spot's own station: a neighbour's miss doesn't carry over to the spot. */
+export function nowcastQualifies(sensor: { kind: "station" | "nearby"; t: number } | null | undefined, now = Date.now()) {
+  return !!sensor && sensor.kind === "station" && now - sensor.t <= NOWCAST_FRESH_MS;
 }
 
 /** The forecast speed at an instant (linear between the hours around it). */
@@ -259,11 +259,11 @@ function phi(z: number) {
   return z >= 0 ? 0.5 * (1 + erf) : 0.5 * (1 - erf);
 }
 
-/** How likely the wind is at least `kn` this hour (0–1). An hour without a range is simply yes or no. */
+/** How likely the wind is at least `kn` this hour (0–1), centred on the middle of its range. An hour without a range is simply yes or no. */
 export function chanceAtLeast(hour: Pick<Hour, "speed" | "lo" | "hi">, kn: number) {
   const sd = hour.lo != null && hour.hi != null ? (hour.hi - hour.lo) / RANGE_SDS : 0;
   if (!(sd > 0)) return hour.speed >= kn ? 1 : 0;
-  return 1 - phi((kn - hour.speed) / sd);
+  return 1 - phi((kn - (hour.lo! + hour.hi!) / 2) / sd);
 }
 
 /**

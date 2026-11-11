@@ -55,15 +55,15 @@ const fmtNoaa = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace(
 
 /**
  * The calibration our server publishes (/api/calibration), as its seed looks: every model as it is (identity speed
- * maps), typical misses per lead bucket, no local stations. Tests that need tuning override the route.
+ * maps), the seed's misses per lead bucket, no local stations. Tests that need tuning override the route.
  */
 export function calibrationFixture() {
-  const model = (mae: number[]) => ({ n: 0, qm: [[0, 0], [4, 4], [8, 8], [12, 12], [16, 16], [20, 20], [25, 25], [35, 35]], mae, gf: 1.3 });
+  const model = (mae: number[]) => ({ n: 0, qm: [[0, 0], [4, 4], [8, 8], [12, 12], [16, 16], [20, 20], [25, 25], [35, 35]], mae, gf: 1.43 });
   return {
     version: 1, updated: new Date().toISOString(), source: "seed", leadBuckets: [12, 36, 72, 9999], stations: [] as unknown[],
-    pooled: { models: { hrrr: model([1.9, 2.4, 2.8, 3.2]), rrfs: model([2.0, 2.5, 2.9, 3.3]), nbm: model([2.0, 2.3, 2.6, 3.0]), ecmwf: model([2.3, 2.5, 2.7, 3.0]), gfs: model([2.4, 2.7, 3.0, 3.3]) } },
-    residual: { q10: [-2.4, -3.2, -3.8, -4.5], q90: [2.6, 3.4, 4.0, 4.8] },
-    nowcast: { tauHours: 3, maxHours: 6 },
+    pooled: { models: { hrrr: model([1.84, 2.41, 2.99, 3.44]), rrfs: model([2.05, 2.25, 2.52, 2.73]), nbm: model([2.05, 2.1, 2.19, 2.42]), ecmwf: model([2.72, 2.83, 2.93, 3.23]), gfs: model([2.77, 2.88, 2.99, 3.29]) } },
+    residual: { q10: [-3.7, -4.53, -5.17, -5.68], q90: [3.11, 3.14, 3.31, 3.64] },
+    nowcast: { tauHours: 2, maxHours: 6 },
     score: null,
   };
 }

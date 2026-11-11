@@ -83,16 +83,19 @@ test("a raw model at a spot reads the sea cell: HRRR and ECMWF show the windier 
   expect(await tile(page, "ECMWF") - await tile(page, "NBM")).toBeGreaterThanOrEqual(7); // (−3 + 10) − (−1)
 });
 
-test("a live sensor reading well above the forecast pulls the next hours up, fading out by the evening", async ({ page }) => {
+const STATION_NAMES: Record<string, string> = { "8726607": "Old Port Tampa", "8726412": "Middle Tampa Bay", "8726724": "Clearwater Beach" };
+
+test("a spot's own station reading well above the forecast pulls the next hours up, fading out; a neighbour's doesn't", async ({ page }) => {
   await mockApis(page);
-  // Picnic Island's own station (Old Port Tampa) reads 10 kn over what the models say for now.
+  // Every NOAA sensor reads 10 kn over what the models say for now. Picnic Island has its own station (Old Port Tampa).
   await page.route("https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?**", (route) => {
     const q = new URL(route.request().url()).searchParams;
-    if (q.get("station") !== "8726607" || q.get("range")) return route.fallback();
+    const id = q.get("station")!;
+    if (!STATION_NAMES[id] || q.get("range")) return route.fallback();
     const now = Math.floor(Date.now() / 360e3) * 360e3;
     const s = speedAt(now / 1000) + 10;
     return route.fulfill({ contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify({
-      metadata: { id: "8726607", name: "Old Port Tampa", lat: "27.8578", lon: "-82.5528" },
+      metadata: { id, name: STATION_NAMES[id] },
       data: [{ t: new Date(now).toISOString().slice(0, 16).replace("T", " "), s: s.toFixed(2), d: "220.0", dr: "SW", g: (s + 4).toFixed(2), f: "0,0" }],
     }) });
   });
@@ -103,10 +106,21 @@ test("a live sensor reading well above the forecast pulls the next hours up, fad
 
   // The next hour: SeaSensei sits far above every raw model (which the sensor doesn't touch) …
   await hoursAhead(page, 1);
-  await expect.poll(async () => await tile(page, "SeaSensei") - await tile(page, "HRRR")).toBeGreaterThanOrEqual(6);
-  expect(await tile(page, "SeaSensei")).toBeGreaterThan(Math.max(await tile(page, "RRFS"), await tile(page, "GFS")) + 4);
+  await expect.poll(async () => await tile(page, "SeaSensei") - await tile(page, "HRRR")).toBeGreaterThanOrEqual(5);
+  expect(await tile(page, "SeaSensei")).toBeGreaterThan(Math.max(await tile(page, "RRFS"), await tile(page, "GFS")) + 3);
   // … and the correction has faded away past six hours.
   await hoursAhead(page, 9);
+  await expect.poll(async () => Math.abs(await tile(page, "SeaSensei") - await tile(page, "HRRR"))).toBeLessThanOrEqual(1);
+
+  // Skyway has no station of its own: the sensor 7 km away shows as its "now", but its miss doesn't bend Skyway's forecast.
+  await hoursAhead(page, 0); // back to now
+  await page.getByRole("button", { name: "Back to spots" }).click();
+  await openSpot(page, "Skyway");
+  await expect(page.getByText(/Nearby sensor · Middle Tampa Bay/)).toBeVisible();
+  await page.getByRole("button", { name: "Models" }).click();
+  await hoursAhead(page, 1);
+  await expect(page.getByRole("button", { name: /^SeaSensei/ })).toBeVisible();
+  await page.waitForTimeout(500); // the tiles follow the timeline's hour a beat later
   await expect.poll(async () => Math.abs(await tile(page, "SeaSensei") - await tile(page, "HRRR"))).toBeLessThanOrEqual(1);
 
 });
