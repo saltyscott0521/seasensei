@@ -26,7 +26,28 @@ function hourlyTimes(hrrrOnly = false) {
  * What a test can change about the stand-ins. `sea`: knots added to every model read with `cell_selection=sea` (the
  * spot requests for HRRR and ECMWF), so a test can make the sea cell windier than the land cell.
  */
-export type MockOptions = { sea?: number };
+export type MockOptions = {
+  sea?: number;
+  /** Active NWS alerts (api.weather.gov features, see `alertFeature`). None by default. */
+  alerts?: unknown[];
+};
+
+/** One api.weather.gov alert. `hours`: how long from now until it ends. */
+export function alertFeature(event = "Small Craft Advisory", hours = 6, extra: Record<string, unknown> = {}) {
+  const ends = new Date(Date.now() + hours * 3600e3).toISOString();
+  return {
+    type: "Feature",
+    properties: {
+      id: `urn:oid:e2e.${event.replace(/\W+/g, "-")}`, event, status: "Actual", messageType: "Alert", severity: "Minor",
+      areaDesc: "Tampa Bay waters", ends, expires: ends,
+      headline: `${event} issued by NWS Tampa Bay Ruskin FL`,
+      description: "* WHAT...Southwest winds 20 to 25 kt with gusts up to 30 kt\nand seas 4 to 6 ft.\n\n* WHERE...Tampa Bay waters.",
+      instruction: "Inexperienced mariners, especially those operating smaller\nvessels, should avoid navigating in hazardous conditions.",
+      parameters: { NWSheadline: [`${event.toUpperCase()} IN EFFECT UNTIL THIS EVENING`] },
+      ...extra,
+    },
+  };
+}
 
 function locationPayload(url: URL, lat: number, lon: number, i: number, opts: MockOptions) {
   const q = url.searchParams, hourly = q.get("hourly")!, models = (q.get("models") ?? "").split(",");
@@ -80,6 +101,9 @@ export async function mockApis(page: Page, opts: MockOptions = {}) {
   });
 
   await page.route("**/api/calibration", (route) => json(route, calibrationFixture()));
+
+  // NWS alerts for the area: none, unless a test asks for some.
+  await page.route("https://api.weather.gov/alerts/active?**", (route) => json(route, { type: "FeatureCollection", features: opts.alerts ?? [] }));
 
   // The daily wind discussion (our own server). Tests that need other states override these routes.
   await page.route(/\/api\/discussion(\?.*)?$/, (route) => {

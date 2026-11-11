@@ -8,6 +8,7 @@ import { SpotDetail } from "./components/SpotDetail";
 import { SpotList } from "./components/SpotList";
 import { Timeline } from "./components/Timeline";
 import type { MapApi } from "./components/WindMap";
+import { AlertBanner } from "./components/shell/AlertBanner";
 import { MapActions, RailActions } from "./components/shell/MapActions";
 import { Panel } from "./components/shell/Panel";
 import { Sheet, sheetEscapes, type TimelinePlace } from "./components/shell/Sheet";
@@ -16,11 +17,13 @@ import { UpdateBoundary } from "./components/shell/UpdateBoundary";
 import { useHeight } from "./components/shell/useHeight";
 import { useLayers } from "./components/shell/useLayers";
 import { ViewTarget } from "./components/shell/ViewTarget";
+import { useMarineAlerts } from "./lib/alerts";
 import { useForecast, usePrimaryModel, useSpots, useWindField } from "./lib/data";
 import {
   bandPadding, CHROME_TOP, desktopBand, DESKTOP_NAV_W, DOCK_EST, EDGE, panelWidth, phoneBand, PILL_H, RAIL_H, sheetSnaps,
   sheetTopPx, SNAP_FULL, SNAP_MID, SNAP_REST, TIMELINE_LIFT, timelineFloatsAt, useDesktop, useViewport, type SnapIndex,
 } from "./lib/layout";
+import { useFreshness } from "./lib/freshness";
 import { duration, ease } from "./lib/motion";
 import { AtProvider, useHourNow } from "./lib/time";
 import { areaStats, fieldAt, type Bounds, type Model, type Spot } from "./lib/wind";
@@ -270,11 +273,16 @@ export default function App() {
     </AnimatePresence>
   ), [viewKey, view.kind, spot, pin, select, openDiscussion, close, startAdd, desktop, movePin, pinAtCentre, pinAt]);
 
+  // Marine alerts in force (NWS): one quiet row above the view, in the panel and in the sheet. Not over the add form.
+  const alerts = useMarineAlerts(spots);
+  const raiseForAlert = useCallback(() => setSnap((s) => (s === SNAP_REST ? SNAP_MID : s)), []);
+  const alertEl = useMemo(() => (adding || !alerts.length ? null : <AlertBanner alerts={alerts} tz={tz} onOpen={raiseForAlert} />), [adding, alerts, tz, raiseForAlert]);
+
   const timelineEl = useMemo(() => (
     <Timeline hours={timeline.hours} models={timeline.models} area={timeline.area} threshold={threshold}
       index={index} onIndex={onIndex} playing={playing} onPlaying={setPlaying} tz={tz}
-      failed={field.isError} onRetry={field.refetch} compact={place === "inline"} />
-  ), [timeline, threshold, index, onIndex, playing, tz, field.isError, field.refetch, place]);
+      failed={field.isError} onRetry={field.refetch} compact={place === "inline"} primary={primary} />
+  ), [timeline, threshold, index, onIndex, playing, tz, field.isError, field.refetch, place, primary]);
 
   const map = useMemo(() => (
     <UpdateBoundary variant="quiet">
@@ -290,7 +298,8 @@ export default function App() {
   // The status. The pill and the panel header follow the thumb. Phones' screen readers (the pill sits outside the
   // sheet, so it is aria-hidden) hear it from inside the sheet, but only when its kind changes (loading, now, a
   // forecast hour, unavailable), never once per hour of a scrub or playback.
-  const statusProps = { ready: !!field.data, failed: field.isError, at: urgentAt, primary, tz };
+  const fresh = useFreshness();
+  const statusProps = { ready: !!field.data, failed: field.isError, at: urgentAt, primary, tz, fresh };
   const st = status(statusProps);
   const [said, setSaid] = useState({ tone: st.tone, text: "" });
   if (said.tone !== st.tone) setSaid({ tone: st.tone, text: st.text });
@@ -310,7 +319,7 @@ export default function App() {
             timeline rather than walking every map marker first. */}
         {desktop && (
           <>
-            <Panel header={<PanelBrand {...statusProps} />} scrollRef={scrollRef} onScroll={onScroll} scrolled={scrolled}>{panel}</Panel>
+            <Panel header={<PanelBrand {...statusProps} />} scrollRef={scrollRef} onScroll={onScroll} scrolled={scrolled}>{alertEl}{panel}</Panel>
             {!adding && <div ref={dockRef} className="absolute bottom-4 z-10" style={{ left: dockLeft, width: dockW }}>{timelineEl}</div>}
             <div className="absolute right-4 top-4 z-10">
               <MapActions {...actions} />
@@ -342,6 +351,7 @@ export default function App() {
         {!desktop && (
           <Sheet snaps={snaps} index={snap} onIndex={setSnap} timeline={timelineEl} place={place}
             scrollRef={scrollRef} onScroll={onScroll} floatRef={floatRef} status={said.text}>
+            {alertEl}
             {panel}
           </Sheet>
         )}

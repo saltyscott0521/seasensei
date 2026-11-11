@@ -75,7 +75,7 @@ test.describe("in the spots' time zone", () => {
   for (let i = 0; i < 12; i++) await page.keyboard.press("ArrowRight");
   const when = (await page.getByTestId("timeline-when").textContent())!;
   expect(when).toMatch(/^\w{3} \d{1,2} (AM|PM)$/);
-  await expect(slider).toHaveAttribute("aria-valuetext", /^\w+day \d{1,2} (AM|PM), HRRR forecast/);
+  await expect(slider).toHaveAttribute("aria-valuetext", /^\w+day \d{1,2} (AM|PM), SeaSensei forecast/);
 
   await openSpot(page, "Picnic Island");
   const line = page.locator('svg[aria-label="48 hour wind forecast"]');

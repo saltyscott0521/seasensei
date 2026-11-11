@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import { useId } from "react";
+import { fmtAge, type Freshness } from "../../lib/freshness";
 import { fmtHour, fmtWeekday } from "../../lib/session";
 import { MODEL_INFO, type Model } from "../../lib/wind";
 
@@ -13,15 +14,29 @@ export type StatusProps = {
   primary: Model;
   /** The rider's time zone (the timeline's). */
   tz: string;
+  /** How old the forecast on screen is (lib/freshness.ts). Without it, the forecast is taken as current. */
+  fresh?: Freshness;
 };
 
-type Tone = "now" | "forecast" | "loading" | "failed";
+type Tone = "now" | "forecast" | "loading" | "failed" | "stale";
 
-/** The agreed status copy: "Now · HRRR forecast", "Forecast · Sat 3 PM", "Loading wind…", "Wind field unavailable". */
-export function status({ ready, failed, at, primary, tz }: StatusProps): { text: string; tone: Tone } {
+/**
+ * The agreed status copy. Named for the forecast the rider chose, never for the map's own model:
+ * "Now · SeaSensei forecast", "Forecast · Sat 3 PM", "Loading wind…", "Wind field unavailable". When what is on screen
+ * is older than a normal refresh (a saved board, no signal, a provider that isn't answering) it says how old instead
+ * of "Now": "Updated 3 h ago · offline", "Updated 50 min ago · retrying", scrubbed "Sat 3 PM · updated 3 h ago".
+ */
+export function status({ ready, failed, at, primary, tz, fresh }: StatusProps): { text: string; tone: Tone } {
+  if (fresh?.old && fresh.updatedAt != null) {
+    const age = fmtAge(fresh.updatedAt);
+    if (at != null) return { text: `${fmtWeekday(at, tz)} ${fmtHour(at, tz)} · updated ${age}`, tone: "stale" };
+    const why = !fresh.online ? "offline" : fresh.trying;
+    return { text: `Updated ${age}${why ? ` · ${why}` : ""}`, tone: "stale" };
+  }
   if (ready) return at != null
     ? { text: `Forecast · ${fmtWeekday(at, tz)} ${fmtHour(at, tz)}`, tone: "forecast" }
     : { text: `Now · ${MODEL_INFO[primary].label} forecast`, tone: "now" };
+  if (fresh && !fresh.online) return { text: "Offline", tone: "failed" };
   return failed ? { text: "Wind field unavailable", tone: "failed" } : { text: "Loading wind…", tone: "loading" };
 }
 
@@ -51,6 +66,7 @@ const DOT: Record<Tone, string> = {
   forecast: "bg-fg-2",
   loading: "bg-fg-3 animate-pulse",
   failed: "bg-strong",
+  stale: "bg-fg-3", // a hollow-looking, quiet dot: not live
 };
 
 /** A status dot and the status text. The text sits alone in its span (tests match it by its exact start). */
@@ -63,7 +79,7 @@ export function StatusLine(props: StatusProps & { className?: string }) {
         {tone === "now" && <span className="halo absolute inset-0 rounded-full bg-accent" />}
         <span className={clsx("relative size-1.5 rounded-full", DOT[tone])} />
       </span>
-      <span className="num truncate">{text}</span>
+      <span className="num truncate" data-status={tone}>{text}</span>
     </span>
   );
 }

@@ -5,7 +5,7 @@ import { Pause, Play, RotateCcw, Wind, WifiOff } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useSpots } from "../lib/data";
 import { duration, ease, spring } from "../lib/motion";
-import { fmtWeekday } from "../lib/session";
+import { fmtHour, fmtWeekday, isDaylightHour } from "../lib/session";
 import { compass, MODEL_INFO, windColor, windGradient, windStops, type Model } from "../lib/wind";
 import { fmtWhen, fmtWhenLong, hourOfDay, labelWidth, nightSpans, useSvgId } from "./charts/scale";
 import { Skeleton } from "./bits";
@@ -27,13 +27,19 @@ const SCALE_MAX = 45; // windGradient() spans 0–45 kn
  * and the map's colour scale. Index 0 is now. Slim on purpose: on phones the whole card stays within 132px.
  * Scrubbed (index > 0), the top line describes the chosen hour instead of the outlook from now.
  *
+ * The outlook only ever points at daylight, in stretches of two hours or more, like the sessions on the board: a windy
+ * night is not "wind on the way". The chip names the forecast the rider chose (`primary`); when that is SeaSensei, a
+ * blend made per spot, the map's own wind comes from a single model, named as a detail ("wind map HRRR").
+ *
  * `compact`: no chart (the outlook line, the slider and its readout), for a timeline riding inside a short phone's sheet.
  * `failed`: the wind field could not load: a one-line "unavailable" card with Try again (`onRetry`). While loading, a
  * placeholder holds the card's place.
  * `where`: where the night shading is worked out for; defaults to the middle of your spots.
  */
-export const Timeline = memo(function Timeline({ hours, models, area, threshold, index, onIndex, playing, onPlaying, tz, failed, onRetry, where, compact }: {
+export const Timeline = memo(function Timeline({ hours, models, area, threshold, index, onIndex, playing, onPlaying, tz, failed, onRetry, where, compact, primary }: {
   hours: number[]; models: Model[]; area: Area[]; threshold: number; index: number; onIndex: (i: number) => void;
+  /** The forecast the rider chose. Defaults to the map's own model for each hour. */
+  primary?: Model;
   playing: boolean; onPlaying: (p: boolean) => void; tz: string; failed?: boolean; onRetry?: () => void;
   where?: { lat: number; lon: number }; compact?: boolean;
 }) {
@@ -50,28 +56,39 @@ export const Timeline = memo(function Timeline({ hours, models, area, threshold,
     return () => clearInterval(id);
   }, [playing, last, onIndex]);
 
-  const outlook = useMemo(() => {
-    if (!area.length || hours.length < 2) return null;
-    const cur = area[0];
-    if (cur && cur.peak >= threshold) {
-      const end = area.findIndex((a, i) => i > 0 && (!a || a.peak < threshold));
-      return { kind: "now" as const, i: 0, head: `Windy now: up to ${Math.round(cur.peak)} kn in view`, mid: "", tail: end > 0 ? `easing by ${fmtWhen(hours[end], tz)}` : "all week" };
-    }
-    const i = area.findIndex((a) => a && a.peak >= threshold);
-    if (i < 0) {
-      const best = area.reduce((b, a, j) => (a && (!area[b] || a.peak > area[b]!.peak) ? j : b), 0);
-      return { kind: "none" as const, i: best, head: `No ${threshold}+ kn in view this week`, mid: "", tail: area[best] ? `best ${fmtWhen(hours[best], tz)}, ${Math.round(area[best]!.peak)} kn` : "" };
-    }
-    let j = i;
-    while (j + 1 < area.length && area[j + 1] && area[j + 1]!.peak >= threshold) j++;
-    const top = area.slice(i, j + 1).reduce((m, a) => Math.max(m, a!.peak), 0);
-    return { kind: "coming" as const, i, head: `Wind on the way: ${fmtWhen(hours[i], tz)}`, mid: `up to ${Math.round(top)} kn ${compass(area[i]!.dir)}`, tail: `for ${j - i + 1} h` };
-  }, [area, hours, threshold, tz]);
-
-  // Days along the week (index of each local midnight) and the night spans, worked out once per field.
+  // Where daylight is worked out for (and the night shading): the middle of your spots.
   const place = useMemo(() => where ?? (spots.length
     ? { lat: spots.reduce((a, s) => a + s.lat, 0) / spots.length, lon: spots.reduce((a, s) => a + s.lon, 0) / spots.length }
     : null), [where, spots]);
+
+  const outlook = useMemo(() => {
+    if (!area.length || hours.length < 2) return null;
+    // Rideable-looking hours: at least the threshold somewhere in view, in daylight (without a place, any hour).
+    const light = (i: number) => !place || isDaylightHour(place.lat, place.lon, hours[i]);
+    const windy = (i: number) => !!area[i] && area[i]!.peak >= threshold && light(i);
+    const runEnd = (i: number) => { let j = i; while (j + 1 < area.length && windy(j + 1)) j++; return j; };
+    if (windy(0)) {
+      const j = runEnd(0);
+      const tail = j + 1 >= area.length ? "all week" : area[j + 1] && area[j + 1]!.peak >= threshold ? `till dark, ${fmtHour(hours[j + 1], tz)}` : `easing by ${fmtWhen(hours[j + 1], tz)}`;
+      return { kind: "now" as const, i: 0, head: `Windy now: up to ${Math.round(area[0]!.peak)} kn in view`, mid: "", tail };
+    }
+    // The next daylight stretch of two hours or more (the board's sessions are at least that long).
+    for (let i = 1; i < area.length; i++) {
+      if (!windy(i)) continue;
+      const j = runEnd(i);
+      if (j > i) {
+        const top = area.slice(i, j + 1).reduce((m, a) => Math.max(m, a!.peak), 0);
+        return { kind: "coming" as const, i, head: `Wind on the way: ${fmtWhen(hours[i], tz)}`, mid: `up to ${Math.round(top)} kn ${compass(area[i]!.dir)}`, tail: `for ${j - i + 1} h` };
+      }
+      i = j;
+    }
+    // Nothing: the strongest daylight hour of the week.
+    let best = -1;
+    area.forEach((a, j) => { if (a && light(j) && (best < 0 || a.peak > area[best]!.peak)) best = j; });
+    return { kind: "none" as const, i: Math.max(0, best), head: `No ${threshold}+ kn in view this week`, mid: "", tail: best >= 0 ? `best ${fmtWhen(hours[best], tz)}, ${Math.round(area[best]!.peak)} kn` : "" };
+  }, [area, hours, threshold, tz, place]);
+
+  // Days along the week (index of each local midnight) and the night spans, worked out once per field.
   const days = useMemo(() => hours.flatMap((h, i) => (i > 0 && hourOfDay(h, tz) === 0 ? [{ i, label: fmtWeekday(h, tz) }] : [])), [hours, tz]);
   const nights = useMemo(() => {
     if (!place || hours.length < 2) return [];
@@ -97,9 +114,13 @@ export const Timeline = memo(function Timeline({ hours, models, area, threshold,
   const t = hours[index];
   const a = area[index];
   const model = models[index];
+  // One name for what's on screen: the chosen forecast. Under SeaSensei the map's wind is a single model's, a detail.
+  const lead = primary === "sensei" ? primary : model;
+  const mapModel = lead !== model ? MODEL_INFO[model]?.label : undefined;
   const label = index === 0 ? "Now" : fmtWhen(t, tz);
-  const valueText = `${index === 0 ? "Now" : fmtWhenLong(t, tz)}, ${MODEL_INFO[model]?.label ?? "model"} forecast`
-    + (a ? `, typical ${Math.round(a.mean)}, up to ${Math.round(a.peak)} knots in view` : "");
+  const valueText = `${index === 0 ? "Now" : fmtWhenLong(t, tz)}, ${MODEL_INFO[lead]?.label ?? "model"} forecast`
+    + (a ? `, typical ${Math.round(a.mean)}, up to ${Math.round(a.peak)} knots in view` : "")
+    + (mapModel ? `, wind map from ${mapModel}` : "");
   // Scrubbed: the top line is the chosen hour ("Sat 3 PM · up to 18 kn SW in view"); at now, the outlook.
   const line = index > 0
     ? { kind: "hour" as const, head: label, mid: a ? `up to ${Math.round(a.peak)} kn ${compass(a.dir)} in view` : "no wind data in view", tail: "" }
@@ -132,7 +153,7 @@ export const Timeline = memo(function Timeline({ hours, models, area, threshold,
         ) : <span className="flex-1" />}
         {index === 0
           ? <Chip tone="accent" size="sm" className="font-semibold tracking-wide">NOW</Chip>
-          : <Chip size="sm" className="font-semibold tracking-wide" icon={<i className="size-1.5 rounded-full" style={{ background: MODEL_INFO[model]?.color }} />}>{MODEL_INFO[model]?.label}</Chip>}
+          : <Chip size="sm" className="font-semibold tracking-wide" icon={<i className="size-1.5 rounded-full" style={{ background: MODEL_INFO[lead]?.color }} />}>{MODEL_INFO[lead]?.label}</Chip>}
       </div>
 
       <div className="mt-1 flex items-center gap-2.5 max-md:gap-2">
@@ -160,6 +181,7 @@ export const Timeline = memo(function Timeline({ hours, models, area, threshold,
             <span className="num min-w-0 flex-1 truncate text-micro text-fg-2">
               <b data-testid="timeline-when" className="font-semibold text-fg">{label}</b>
               {a && <> · {knots(a)} kn<span className="@max-[240px]:hidden"> {compass(a.dir)}</span></>}
+              {mapModel && <span data-testid="map-model" className="text-fg-3 @max-[330px]:hidden" title={`The wind drawn on the map is ${mapModel}'s. Your spots use SeaSensei.`}> · wind map {mapModel}</span>}
             </span>
             <Scale />
           </div>

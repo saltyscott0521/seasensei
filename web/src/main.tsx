@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MotionConfig } from "motion/react";
 import App from "./App";
 import { UpdateBoundary } from "./components/shell/UpdateBoundary";
+import { persistQueries } from "./lib/persist";
 import "./index.css";
 
 // No global `vite:preloadError` reload: Vite fires it for speculative prefetches too (the idle discussion / add-form
@@ -11,8 +12,16 @@ import "./index.css";
 // UpdateBoundary (one guarded reload onto the new build, then "SeaSensei was updated — Reload").
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { refetchOnWindowFocus: true, retry: 2 } },
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: true,
+      // A rate limit (Open-Meteo's 429) is not helped by asking again within seconds: wait for the next refresh.
+      retry: (failures, error) => failures < 2 && !/\b429\b/.test(String((error as Error)?.message)),
+    },
+  },
 });
+// The last known board, back before the first render; each successful fetch is saved from here on (lib/persist.ts).
+persistQueries(queryClient);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

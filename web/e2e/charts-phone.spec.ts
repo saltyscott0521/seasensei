@@ -46,7 +46,7 @@ for (const size of [{ width: 412, height: 915 }, { width: 320, height: 640 }]) {
     await slider.focus();
     for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowRight");
     await expect(page.getByTestId("timeline-when")).toHaveText(/^\w{3} \d{1,2} (AM|PM)$/);
-    await expect(card.getByText("HRRR", { exact: true })).toBeVisible();
+    await expect(card.getByText("SeaSensei", { exact: true })).toBeVisible(); // the chosen forecast, not the map's model
     expect((await card.boundingBox())!.height).toBeLessThanOrEqual(132);
   });
 }
