@@ -15,6 +15,7 @@ import { expect, test } from "@playwright/test";
  * learning behind /api/calibration, against stand-in Open-Meteo, NOAA, IEM and R2. No real network, no real key.
  */
 
+const KNOTS = [0, 4, 8, 12, 16, 20, 25, 35]; // the fixed raw speeds of every quantile map
 const serverDir = fileURLToPath(new URL("../server", import.meta.url));
 const TZ = "America/New_York";
 const dayKey = (ms: number) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(ms);
@@ -231,6 +232,17 @@ async function startStubs(): Promise<Stubs> {
 
 /* ---------------- the real server under test ---------------- */
 
+// The tests learn from a plain seed (every map as it is, no stations), so what's asserted is what was learned here.
+// The shipped seed (server/calibration-seed.json) has its own test.
+const plain = (mae: number[], gf: number) => ({ n: 0, qm: KNOTS.map((k) => [k, k]), mae, gf });
+const PLAIN_SEED = {
+  version: 1, updated: "2026-11-11T00:00:00Z", source: "seed", leadBuckets: [12, 36, 72, 9999], stations: [],
+  pooled: { models: { hrrr: plain([1.9, 2.4, 2.8, 3.2], 1.3), rrfs: plain([2.0, 2.5, 2.9, 3.3], 1.3), nbm: plain([2.0, 2.3, 2.6, 3.0], 1.3), ecmwf: plain([2.3, 2.5, 2.7, 3.0], 1.35), gfs: plain([2.4, 2.7, 3.0, 3.3], 1.35) } },
+  residual: { q10: [-2.4, -3.2, -3.8, -4.5], q90: [2.6, 3.4, 4.0, 4.8] }, nowcast: { tauHours: 3, maxHours: 6 }, score: null,
+};
+const plainSeedFile = path.join(os.tmpdir(), `seasensei-plain-seed-${process.pid}.json`);
+fs.writeFileSync(plainSeedFile, JSON.stringify(PLAIN_SEED));
+
 const freePort = () => new Promise<number>((resolve) => { const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = (s.address() as net.AddressInfo).port; s.close(() => resolve(p)); }); });
 
 type Running = { base: string; dataDir: string; logs: () => string; stop: () => Promise<void> };
@@ -246,7 +258,7 @@ async function startServer(stubs: Stubs, env: Record<string, string> = {}): Prom
     env: {
       PATH: process.env.PATH, PORT: String(port), DIST_DIR: distDir, DATA_DIR: dataDir,
       NWS_BASE: stubs.url, OPENMETEO_BASE: stubs.url, COOPS_BASE: stubs.url, IEM_BASE: stubs.url, ANTHROPIC_BASE_URL: stubs.url, ANTHROPIC_API_KEY: "test-key",
-      DISCUSSION_HOUR: "0", DISCUSSION_BOOT_DELAY_MS: "50", SITE_URL: "https://example.test", ...env,
+      DISCUSSION_HOUR: "0", DISCUSSION_BOOT_DELAY_MS: "50", SITE_URL: "https://example.test", CALIBRATION_SEED_FILE: plainSeedFile, ...env,
     },
   });
   child.stdout!.on("data", (c) => (logs += c));
@@ -385,7 +397,6 @@ const forecastPuts = (stubs: Stubs) => stubs.puts.map((x) => x.path).filter((k) 
 
 /* ---------------- the contract for GET /api/calibration ---------------- */
 
-const KNOTS = [0, 4, 8, 12, 16, 20, 25, 35];
 const FIVE = ["ecmwf", "gfs", "hrrr", "nbm", "rrfs"];
 function expectContract(c: any) {
   const model = (x: any, where: string) => {
@@ -620,7 +631,8 @@ test("learning: runs paired with observations move each model's map the right wa
   const hour = HOUR0; // everything planted is at least 13 h old, so it is settled whatever the clock does next
   const PORT = { id: "coops:8726607", name: "Old Port Tampa", lat: 27.8578, lon: -82.5528 };
   // Ten days of wind at one shore sensor, 2–18 kn; HRRR runs 20 % light, GFS 3 kn too windy.
-  const wind = (t: number) => { const h = t / HOUR_S; return +(10 + 6 * Math.sin((2 * Math.PI * h) / 24) + 2 * Math.sin(h / 7)).toFixed(2); };
+  // (it peaks at 18Z, early afternoon in Tampa, so the windy hours are daylight ones)
+  const wind = (t: number) => { const h = t / HOUR_S; return +(10 + 6 * Math.sin((2 * Math.PI * (h - 12)) / 24) + 2 * Math.sin(h / 7)).toFixed(2); };
   const days: Record<string, any> = {};
   for (let t = hour - 10 * 86400; t <= hour - 13 * HOUR_S; t += HOUR_S) {
     const doc = (days[obsKeyOf(t)] ??= { version: 1, day: iso(t).slice(0, 10), stations: { [PORT.id]: { ...PORT, id: undefined, kind: "shore", hours: {} } } });
@@ -669,23 +681,25 @@ test("learning: runs paired with observations move each model's map the right wa
     expect(n).toBeGreaterThan(180);
     expect(n).toBeLessThanOrEqual(paired);
     // HRRR reads 8 kn when the sensor reads 10, 12 when it reads 15: the map lifts it, by that share of the way
-    // (the station starts from the pooled map, which this one sensor has already lifted by the same share)
-    const pooledLift = (raw: number) => at("hrrr", raw, c.pooled) - raw;
-    expect(pooledLift(8)).toBeGreaterThan(w * 1.4);
-    expect(pooledLift(8)).toBeLessThan(w * 2.6);
-    expect(at("hrrr", 8) - 8).toBeGreaterThan(pooledLift(8) + w * (1.4 - pooledLift(8)));
-    expect(at("hrrr", 8) - 8).toBeLessThan(pooledLift(8) + w * (2.6 - pooledLift(8)));
-    expect(at("hrrr", 12)).toBeGreaterThan(at("hrrr", 12, c.pooled));
-    expect(at("hrrr", 12)).toBeLessThan(15.6);
+    expect(at("hrrr", 8) - 8).toBeGreaterThan(w * 1.4);
+    expect(at("hrrr", 8) - 8).toBeLessThan(w * 2.6);
+    expect(at("hrrr", 12) - 12).toBeGreaterThan(w * 2);
+    expect(at("hrrr", 12) - 12).toBeLessThan(w * 3.6);
     // GFS reads 12 when the sensor reads 9: the map lowers it (and the decoy's 45 kn never got in)
-    expect(12 - at("gfs", 12, c.pooled)).toBeGreaterThan(w * 2.4);
-    expect(12 - at("gfs", 12, c.pooled)).toBeLessThan(w * 3.6);
-    expect(at("gfs", 12)).toBeLessThan(at("gfs", 12, c.pooled));
-    expect(at("gfs", 12)).toBeGreaterThan(9);
-    expect(at("gfs", 16)).toBeLessThan(at("gfs", 16, c.pooled));
+    expect(12 - at("gfs", 12)).toBeGreaterThan(w * 2.4);
+    expect(12 - at("gfs", 12)).toBeLessThan(w * 3.6);
+    expect(at("gfs", 16)).toBeLessThan(16 - w * 2);
     expect(at("hrrr", 35)).toBeLessThanOrEqual(41); // beyond what was seen, the correction is carried, within ±6 kn
     // the misses mix too: HRRR's short-lead miss sits between the seed's 1.9 and what was measured
     expect(st.models.hrrr.mae[0]).toBeLessThan(1.9);
+    // Pooled: the maps are never learned (a borrowed map backtested worse than none), the misses and gust factors are
+    for (const m of FIVE) expect(c.pooled.models[m].qm, m).toEqual(KNOTS.map((k) => [k, k]));
+    expect(c.pooled.models.gfs.n).toBeGreaterThan(180);
+    expect(c.pooled.models.gfs.mae[0]).toBeGreaterThan(2.4); // raw GFS misses by 3 kn here; the seed said 2.4
+    expect(c.pooled.models.gfs.mae[0]).toBeLessThan(3);
+    expect(c.pooled.models.gfs.gf).toBeLessThan(1.35); // toward the measured 1.3
+    // The range comes from daylight hours with 10 kn or more forecast: it has moved off the seed's
+    expect([c.residual.q10[0], c.residual.q90[0]]).not.toEqual([-2.4, 2.6]);
     // the sensor's gusts were 1.3 × its speed
     expect(st.models.hrrr.gf).toBeCloseTo(1.3, 2);
     // models with no pairs keep the seed
@@ -696,6 +710,9 @@ test("learning: runs paired with observations move each model's map the right wa
     expect(c.score.models.sensei.mae).toBeLessThan(c.score.models.gfs.mae);
     expect(c.score.models.gfs.mae).toBeCloseTo(3, 1);
     expect(c.score.models.hrrr.senseiMae).toBeLessThan(c.score.models.hrrr.mae);
+    // the same blend with no sensor of its own (pooled, unmapped): scored too, and worse than with this sensor's maps
+    expect(c.score.senseiPooledMae).toBeGreaterThan(c.score.models.sensei.mae);
+    expect(c.score.senseiPooledMae).toBeLessThan(c.score.models.gfs.mae);
 
     const status = await learning(app.base);
     expect(status).toMatchObject({ lastError: null, errors: 0, stationsLearned: 1, source: "learned", seedError: null });
@@ -761,7 +778,7 @@ test("security headers on every response; without R2 the calibration is the seed
     expect(res.headers.get("cache-control")).toBe("public, max-age=600");
     const c = await res.json();
     expectContract(c);
-    expect(c).toMatchObject({ source: "seed", score: null });
+    expect(c).toMatchObject({ source: "seed", score: null, stations: [] });
     expect((await archiveStatus(app.base)).learning).toMatchObject({ lastCycle: null, source: "seed", seedError: null });
   } finally { await app.stop(); }
 
@@ -780,6 +797,26 @@ test("security headers on every response; without R2 the calibration is the seed
     expect((await archiveStatus(soft.base)).learning.seedError).toMatch(/pooled\.hrrr/);
     expect(soft.logs()).toMatch(/seed file not usable/);
   } finally { await soft.stop(); fs.rmSync(bad, { force: true }); await stubs.close(); }
+});
+
+test("the shipped seed loads and validates; stations the archive never observes (NDBC buoys) are served as the seed has them", async () => {
+  const stubs = await startStubs();
+  const shipped = JSON.parse(fs.readFileSync(path.join(serverDir, "calibration-seed.json"), "utf8"));
+  const app = await startServer(stubs, { ANTHROPIC_API_KEY: "", CALIBRATION_SEED_FILE: "" });
+  try {
+    expect((await archiveStatus(app.base)).learning.seedError).toBeNull();
+    const c = await (await fetch(`${app.base}/api/calibration`)).json();
+    expectContract(c);
+    expect(c.source).toBe("seed");
+    expect(c.stations.map((s: any) => s.id)).toEqual(shipped.stations.map((s: any) => s.id));
+    for (const m of FIVE) expect(c.pooled.models[m].qm, m).toEqual(KNOTS.map((k) => [k, k])); // pooled maps are identity by design
+    for (const s of c.stations.filter((x: any) => x.id.startsWith("ndbc:"))) {
+      const src = shipped.stations.find((x: any) => x.id === s.id);
+      expect(s).toMatchObject({ kind: src.kind, lat: src.lat, lon: src.lon });
+      expect(Object.keys(s.models).sort()).toEqual(Object.keys(src.models).sort());
+      expect(s.models.hrrr.mae).toEqual(src.models.hrrr.mae);
+    }
+  } finally { await app.stop(); await stubs.close(); }
 });
 
 test("without an API key nothing is generated and the API says so; bad dates are rejected", async () => {
