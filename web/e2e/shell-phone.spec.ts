@@ -30,7 +30,7 @@ test("phone: a status pill on the left and one rail of thumb-sized controls on t
   const vp = page.viewportSize()!;
   const pill = page.getByTestId("status-pill");
   await expect(pill).toContainText("SeaSensei");
-  await expect(pill).toContainText("Now · HRRR forecast");
+  await expect(pill).toContainText("Now · SeaSensei forecast");
   const p = await box(pill);
   let prev: { x: number; y: number; width: number; height: number } | null = null;
   for (const label of RAIL) {
@@ -235,7 +235,7 @@ test("phone: when the wind field fails, the sheet says so to screen readers and 
   fail = false;
   await retry.click();
   await expect(page.getByRole("slider", { name: "Forecast time" })).toBeVisible();
-  await expect(sheet(page).getByRole("status")).toHaveText("Now · HRRR forecast");
+  await expect(sheet(page).getByRole("status")).toHaveText("Now · SeaSensei forecast");
 });
 
 test.describe("with motion", () => {

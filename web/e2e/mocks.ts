@@ -12,8 +12,8 @@ const HOUR = 3600;
 const json = (route: Route, body: unknown) => route.fulfill({ contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(body) });
 const nowHour = () => Math.floor(Date.now() / 1000 / HOUR) * HOUR;
 
-/** Sea-breeze-ish day: 8 kn overnight rising to ~24 kn mid-afternoon, wind from the SW. */
-const speedAt = (t: number) => 16 + 8 * Math.sin(((t / HOUR - 9) / 24) * 2 * Math.PI);
+/** Sea-breeze-ish day: 8 kn overnight rising to ~24 kn mid-afternoon, wind from the SW. `t` in seconds. HRRR reads exactly this; the other models are offset (see `bias`). */
+export const speedAt = (t: number) => 16 + 8 * Math.sin(((t / HOUR - 9) / 24) * 2 * Math.PI);
 const dirAt = () => 225;
 
 function hourlyTimes(hrrrOnly = false) {
@@ -22,7 +22,13 @@ function hourlyTimes(hrrrOnly = false) {
   return Array.from({ length: n }, (_, i) => start + i * HOUR);
 }
 
-function locationPayload(url: URL, lat: number, lon: number, i: number) {
+/**
+ * What a test can change about the stand-ins. `sea`: knots added to every model read with `cell_selection=sea` (the
+ * spot requests for HRRR and ECMWF), so a test can make the sea cell windier than the land cell.
+ */
+export type MockOptions = { sea?: number };
+
+function locationPayload(url: URL, lat: number, lon: number, i: number, opts: MockOptions) {
   const q = url.searchParams, hourly = q.get("hourly")!, models = (q.get("models") ?? "").split(",");
   const times = hourlyTimes();
   const cut = nowHour() + 48 * HOUR; // HRRR ends at 48 h
@@ -33,8 +39,9 @@ function locationPayload(url: URL, lat: number, lon: number, i: number) {
     for (const m of models) out[models.length === 1 ? variable : `${variable}_${m}`] = times.map((t) => ((m === "gfs_hrrr" && t > cut) || (m === "ncep_rrfs_conus" && t > rrfsCut) ? null : +(fn(t, m) + (i % 3) * 0.2).toFixed(1)));
   };
   const bias: Record<string, number> = { gfs_hrrr: 0, ncep_rrfs_conus: 0.5, ncep_nbm_conus: -1, ecmwf_ifs025: -3, gfs_global: 1 };
-  if (hourly.includes("wind_speed_10m")) add("wind_speed_10m", (t, m) => speedAt(t) + (bias[m] ?? 0));
-  if (hourly.includes("wind_gusts_10m")) add("wind_gusts_10m", (t, m) => speedAt(t) + 4 + (bias[m] ?? 0));
+  const sea = q.get("cell_selection") === "sea" ? opts.sea ?? 0 : 0;
+  if (hourly.includes("wind_speed_10m")) add("wind_speed_10m", (t, m) => speedAt(t) + (bias[m] ?? 0) + sea);
+  if (hourly.includes("wind_gusts_10m")) add("wind_gusts_10m", (t, m) => speedAt(t) + 4 + (bias[m] ?? 0) + sea);
   if (hourly.includes("wind_direction_10m")) add("wind_direction_10m", () => dirAt());
   return { latitude: lat, longitude: lon, timezone: "America/New_York", utc_offset_seconds: -14400, hourly: out };
 }
@@ -46,16 +53,33 @@ const STATIONS = [
 ];
 const fmtNoaa = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
 
-export async function mockApis(page: Page) {
+/**
+ * The calibration our server publishes (/api/calibration), as its seed looks: every model as it is (identity speed
+ * maps), typical misses per lead bucket, no local stations. Tests that need tuning override the route.
+ */
+export function calibrationFixture() {
+  const model = (mae: number[]) => ({ n: 0, qm: [[0, 0], [4, 4], [8, 8], [12, 12], [16, 16], [20, 20], [25, 25], [35, 35]], mae, gf: 1.3 });
+  return {
+    version: 1, updated: new Date().toISOString(), source: "seed", leadBuckets: [12, 36, 72, 9999], stations: [] as unknown[],
+    pooled: { models: { hrrr: model([1.9, 2.4, 2.8, 3.2]), rrfs: model([2.0, 2.5, 2.9, 3.3]), nbm: model([2.0, 2.3, 2.6, 3.0]), ecmwf: model([2.3, 2.5, 2.7, 3.0]), gfs: model([2.4, 2.7, 3.0, 3.3]) } },
+    residual: { q10: [-2.4, -3.2, -3.8, -4.5], q90: [2.6, 3.4, 4.0, 4.8] },
+    nowcast: { tauHours: 3, maxHours: 6 },
+    score: null,
+  };
+}
+
+export async function mockApis(page: Page, opts: MockOptions = {}) {
   await page.route("**/fonts.googleapis.com/**", (r) => r.abort());
   await page.route("**/fonts.gstatic.com/**", (r) => r.abort());
 
   await page.route("https://api.open-meteo.com/v1/forecast?**", (route) => {
     const url = new URL(route.request().url());
     const lats = url.searchParams.get("latitude")!.split(","), lons = url.searchParams.get("longitude")!.split(",");
-    const all = lats.map((la, i) => locationPayload(url, +la, +lons[i], i));
+    const all = lats.map((la, i) => locationPayload(url, +la, +lons[i], i, opts));
     return json(route, all.length === 1 ? all[0] : all);
   });
+
+  await page.route("**/api/calibration", (route) => json(route, calibrationFixture()));
 
   // The daily wind discussion (our own server). Tests that need other states override these routes.
   await page.route(/\/api\/discussion(\?.*)?$/, (route) => {

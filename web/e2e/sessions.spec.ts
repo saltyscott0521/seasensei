@@ -49,7 +49,7 @@ const toMin = (h: number, ap: string) => ((h % 12) + (ap === "PM" ? 12 : 0)) * 6
 
 test("rideable windows are daylight only: none starts before sunrise or ends after sunset", async ({ page }) => {
   await openSpot(page, "Fort De Soto");
-  const chips = page.locator("span[title^='HRRR'], span[title^='RRFS'], span[title^='NBM']");
+  const chips = page.locator("span[title^='SeaSensei'], span[title^='HRRR'], span[title^='RRFS'], span[title^='NBM']");
   await expect(chips.first()).toBeVisible(); // the mock wind is rideable from the SW every afternoon
   const texts = await chips.allTextContents();
   for (const text of texts) {

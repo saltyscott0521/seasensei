@@ -56,7 +56,7 @@ for (const size of [{ width: 412, height: 839 }, { width: 375, height: 667 }]) {
     // the picker is small to the eye, full size to the thumb, and still the one "Forecast model"
     const picker = page.getByRole("combobox", { name: "Forecast model" });
     expect((await picker.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-    await expect(picker).toHaveAccessibleDescription(/NOAA/);
+    await expect(picker).toHaveAccessibleDescription(/blend of all five models/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
   });
 }

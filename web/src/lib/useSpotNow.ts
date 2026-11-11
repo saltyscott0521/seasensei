@@ -1,7 +1,6 @@
-import { useQueries, type UseQueryResult } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { forecastQuery, useForecast, useLiveStations, useObservation, usePrimaryModel, useSpots, useStations } from "./data";
-import { FRESH_MS, NEARBY_MAX_KM, ownStation, rankSpots, sessions, verdict, type NowSource, type Sensor, type Session, type Verdict } from "./session";
+import { useForecast, useForecasts, useLiveStations, useObservation, useSensor, useSpots, useStations } from "./data";
+import { FRESH_MS, ownStation, rankSpots, sessions, verdict, type NowSource, type Session, type Verdict } from "./session";
 import { useAt, useNow } from "./time";
 import { distanceKm, nearestHour, nearestLive, rideState, type Forecast, type Hour, type Spot } from "./wind";
 
@@ -13,29 +12,20 @@ const EMPTY: Hour[] = [];
 /**
  * Everything a card, marker or the detail needs about one spot: the best "now" reading and where it came from,
  * its daylight sessions from now on, and the verdict. Called by every card, marker and the detail; queries dedupe.
+ * `fc.data` is the forecast as shown (SeaSensei bends toward a fresh sensor reading); `model` is what the forecast
+ * said for this hour before that, so it can be compared with the reading.
  */
 export function useSpotNow(spot: Spot | undefined) {
   const clock = useNow();
   const at = useAt();
   const fc = useForecast(spot);
-  const own = ownStation(spot);
-  const ob = useObservation(own);
-  const live = useLiveStations();
-  const stations = useStations();
+  const ob = useObservation(ownStation(spot));
   const hours = fc.data?.hours ?? EMPTY;
-  const model = nearestHour(hours, Date.now());
+  const model = nearestHour(fc.base?.hours ?? EMPTY, Date.now());
 
   // The sensor behind "now": the spot's own station; in auto mode (no station set) the nearest live sensor
   // within 16 km; nothing for "none" (forecast only).
-  const ownAt = own ? (stations.data?.find((s) => s.id === own) ?? live.data?.find((r) => r.id === own)) : undefined;
-  let sensor: Sensor | null = null;
-  if (spot && own && ob.data) {
-    sensor = { kind: "station", id: own, name: ob.data.name, t: ob.data.t, speed: ob.data.speed, gust: ob.data.gust, dir: ob.data.dir,
-      km: ownAt ? distanceKm(spot.lat, spot.lon, ownAt.lat, ownAt.lon) : null };
-  } else if (spot && !spot.station && live.data) {
-    const n = nearestLive(live.data, spot.lat, spot.lon, NEARBY_MAX_KM);
-    if (n) sensor = { kind: "nearby", id: n.id, name: n.name, t: n.t, speed: n.speed, gust: n.gust, dir: n.dir, km: n.km };
-  }
+  const sensor = useSensor(spot);
   // Prefer a fresh reading (< 90 min) over the model for "now".
   const fresh = sensor && Date.now() - sensor.t < FRESH_MS ? sensor : null;
   const source: NowSource = fresh ? fresh.kind : "model";
@@ -101,14 +91,11 @@ export type RankedSpot = {
   verdict: Verdict | null;
 };
 
-const pick = (rs: UseQueryResult<Forecast>[]) => rs.map((r) => ({ data: r.data, status: r.status }));
-
-/** Every spot with its sessions and verdict, best first (see rankSpots). Shares each spot's forecast query with its card. */
+/** Every spot with its sessions and verdict, best first (see rankSpots). Shares each spot's forecast queries with its card. */
 export function useRankedSpots(): RankedSpot[] {
   const spots = useSpots();
-  const model = usePrimaryModel();
   const clock = useNow();
-  const results = useQueries({ queries: spots.map((s) => forecastQuery(model, s)), combine: pick });
+  const results = useForecasts(spots);
   return useMemo(() => rankSpots(spots.map((spot, i): RankedSpot => {
     const forecast = results[i]?.data;
     const list = forecast ? sessions(forecast.hours, spot, { from: clock }) : [];

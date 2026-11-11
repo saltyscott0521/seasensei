@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hourlyObs, inArc, parseForecast, parseObservation } from "./wind";
+import { hourlyObs, inArc, chainForecast, parseObservation, parseSpotModels } from "./wind";
 
 // Unit tests are kept only for logic that has actually broken. Behaviour is covered end to end in /e2e.
 
@@ -20,10 +20,10 @@ describe("bugs that bit", () => {
   });
 
   it("the forecast hands off HRRR → RRFS → NBM as each runs out", () => {
-    const f = parseForecast({ timezone: "UTC", hourly: { time: [0, 3600, 7200],
+    const f = chainForecast(parseSpotModels([{ models: ["hrrr", "rrfs", "nbm"], json: { timezone: "UTC", hourly: { time: [0, 3600, 7200],
       wind_speed_10m_gfs_hrrr: [10, null, null], wind_gusts_10m_gfs_hrrr: [14, null, null], wind_direction_10m_gfs_hrrr: [90, null, null],
       wind_speed_10m_ncep_rrfs_conus: [11, 15, null], wind_gusts_10m_ncep_rrfs_conus: [15, 20, null], wind_direction_10m_ncep_rrfs_conus: [95, 120, null],
-      wind_speed_10m_ncep_nbm_conus: [9, 14, 18], wind_gusts_10m_ncep_nbm_conus: [13, 19, 24], wind_direction_10m_ncep_nbm_conus: [80, 110, 200] } });
+      wind_speed_10m_ncep_nbm_conus: [9, 14, 18], wind_gusts_10m_ncep_nbm_conus: [13, 19, 24], wind_direction_10m_ncep_nbm_conus: [80, 110, 200] } } }]), "hrrr");
     expect(f.hours.map((h) => [h.speed, h.model])).toEqual([[10, "hrrr"], [15, "rrfs"], [18, "nbm"]]);
   });
 });

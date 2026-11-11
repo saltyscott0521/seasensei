@@ -28,44 +28,54 @@ export function arcLabel(arc?: Arc) {
   return `${compass(arc.dirC)} ±${Math.round(arc.dirW / 2)}° (${compass(arc.dirC - arc.dirW / 2)}–${compass(arc.dirC + arc.dirW / 2)})`;
 }
 
-export type Model = "hrrr" | "rrfs" | "nbm" | "ecmwf" | "gfs";
+export type Model = "sensei" | "hrrr" | "rrfs" | "nbm" | "ecmwf" | "gfs";
+/** The models as they come from Open-Meteo; "sensei" is our blend of them (lib/sensei.ts). */
+export type RawModel = Exclude<Model, "sensei">;
+export const RAW_MODELS: RawModel[] = ["hrrr", "rrfs", "nbm", "ecmwf", "gfs"];
 
-/** Every model we show, keyed by our id; `key` is Open-Meteo's model name. */
+/** Every model we show, keyed by our id; `key` is Open-Meteo's model name (SeaSensei's is our own). */
 export const MODEL_INFO: Record<Model, { key: string; label: string; color: string; note: string }> = {
+  sensei: { key: "sensei", label: "SeaSensei", color: "#f1f5f9", note: "Our blend of all five models, tuned to local sensors" },
   hrrr: { key: "gfs_hrrr", label: "HRRR", color: "#22d3ee", note: "3 km, to 48 h" },
   rrfs: { key: "ncep_rrfs_conus", label: "RRFS", color: "#f472b6", note: "3 km, NOAA's new model, to 84 h" },
   nbm: { key: "ncep_nbm_conus", label: "NBM", color: "#facc15", note: "NOAA blend, to 7 d" },
   ecmwf: { key: "ecmwf_ifs025", label: "ECMWF", color: "#a78bfa", note: "European, 25 km, to 7 d" },
   gfs: { key: "gfs_global", label: "GFS", color: "#fb923c", note: "US global, to 7 d" },
 };
-export const PRIMARY_MODELS: Model[] = ["hrrr", "rrfs", "nbm", "ecmwf", "gfs"];
+/** What a rider can pick to lead the forecast: SeaSensei (the default), then each raw model. */
+export const PRIMARY_MODELS: Model[] = ["sensei", ...RAW_MODELS];
+export const DEFAULT_MODEL: Model = "sensei";
 
 /**
- * The models a forecast is drawn from, best first; each hour comes from the first one that has it.
+ * The raw models a forecast is drawn from, best first; each hour comes from the first one that has it.
  * HRRR runs out at 48 h, RRFS carries on to 84 h, then NOAA's blend to 7 days. The global models cover the week alone.
+ * SeaSensei blends all five at a spot (no chain); for the map's wind field, which stays raw, it uses HRRR's chain.
  */
-export function chainFor(primary: Model): Model[] {
-  if (primary === "hrrr") return ["hrrr", "rrfs", "nbm"];
+export function chainFor(primary: Model): RawModel[] {
+  if (primary === "hrrr" || primary === "sensei") return ["hrrr", "rrfs", "nbm"];
   if (primary === "rrfs") return ["rrfs", "nbm"];
   return [primary];
 }
-/** Where a forecast switches from one model to the next (HRRR → RRFS at ~48 h, RRFS → NBM at ~84 h). */
+/** Where a forecast switches from one model to the next (HRRR → RRFS at ~48 h, RRFS → NBM at ~84 h). SeaSensei has none. */
 export function handoffs(hours: Hour[]) {
   return hours.flatMap((h, i) => (i > 0 && h.model !== hours[i - 1].model ? [{ t: h.t, from: hours[i - 1].model, to: h.model }] : []));
 }
 
-/** "HRRR → RRFS → NBM" */
-export const chainLabel = (primary: Model) => chainFor(primary).map((m) => MODEL_INFO[m].label).join(" → ");
+/** "SeaSensei" · "HRRR → RRFS → NBM" */
+export const chainLabel = (primary: Model) =>
+  primary === "sensei" ? MODEL_INFO.sensei.label : chainFor(primary).map((m) => MODEL_INFO[m].label).join(" → ");
 
 /** What each choice of lead model means, in a rider's words (the picker's visible caption). */
 export const CHAIN_PLAIN: Record<Model, string> = {
+  sensei: MODEL_INFO.sensei.note,
   hrrr: "Sharpest local model first, then NOAA's blend",
   rrfs: "NOAA's new local model first, then its blend",
   nbm: "NOAA's blend of models, all week",
   ecmwf: "The European global model, all week",
   gfs: "The US global model, all week",
 };
-export type Hour = { t: number; speed: number; gust: number; dir: number; model: Model }; // t = ms epoch, knots, deg FROM
+/** t = ms epoch, knots, deg FROM. SeaSensei hours also carry the range the wind is likely to fall in (`lo`–`hi`, kn). */
+export type Hour = { t: number; speed: number; gust: number; dir: number; model: Model; lo?: number; hi?: number };
 export type Forecast = { timeZone: string; hours: Hour[] };
 export type Observation = { name: string; t: number; speed: number; gust: number; dir: number };
 export type Station = { id: string; name: string; lat: number; lon: number };
@@ -122,14 +132,85 @@ export const TAMPA_BAY: Omit<Spot, "id">[] = [
   { name: "Picnic Island", lat: 27.853, lon: -82.552, min: 15, max: 30, station: "8726607" },
 ];
 
-export function forecastUrl(lat: number, lon: number, primary: Model = "hrrr") {
+/**
+ * Which grid cell each model is read from at a spot. Open-Meteo's `cell_selection` applies to a whole request, so a
+ * spot is two requests: HRRR and ECMWF from the nearest sea cell (their land cells read too light on the shore),
+ * RRFS, NBM and GFS from the default cell.
+ */
+export const SPOT_REQUESTS: { models: RawModel[]; cell?: "sea" }[] = [
+  { models: ["hrrr", "ecmwf"], cell: "sea" },
+  { models: ["rrfs", "nbm", "gfs"] },
+];
+
+/** One of a spot's two Open-Meteo requests (speed, gust, direction; a day back, a week ahead). */
+export function spotModelsUrl(lat: number, lon: number, req: { models: RawModel[]; cell?: "sea" }) {
   const q = new URLSearchParams({
     latitude: String(lat), longitude: String(lon),
     hourly: "wind_speed_10m,wind_gusts_10m,wind_direction_10m",
-    models: chainFor(primary).map((m) => MODEL_INFO[m].key).join(","), wind_speed_unit: "kn", timeformat: "unixtime",
+    models: req.models.map((m) => MODEL_INFO[m].key).join(","), wind_speed_unit: "kn", timeformat: "unixtime",
     timezone: "auto", forecast_days: "7", past_days: "1",
   });
+  if (req.cell) q.set("cell_selection", req.cell);
   return `https://api.open-meteo.com/v1/forecast?${q}`;
+}
+
+/** Every raw model at a spot, hour by hour (null where a model has no value). `partial`: a request is missing. */
+export type ModelSeries = {
+  timeZone: string;
+  times: number[];
+  models: Partial<Record<RawModel, { speed: (number | null)[]; gust: (number | null)[]; dir: (number | null)[] }>>;
+  partial?: boolean;
+  /** Why a request is missing ("HTTP 429"). */
+  error?: string;
+};
+
+/**
+ * A spot's Open-Meteo responses → one series per model on one time axis. `json` is null for a request that failed;
+ * at least one must have arrived. (Multi-model responses suffix keys with the model name; a single-model one doesn't.)
+ */
+export function parseSpotModels(parts: { json: any; models: RawModel[] }[]): ModelSeries {
+  const ok = parts.filter((p) => p.json?.hourly?.time);
+  if (!ok.length) throw new Error("No forecast data");
+  const times: number[] = [...new Set(ok.flatMap((p) => p.json.hourly.time as number[]))].sort((a, b) => a - b).map((t) => t * 1000);
+  const out: ModelSeries = { timeZone: ok[0].json.timezone, times, models: {}, partial: ok.length < parts.length };
+  for (const { json, models } of ok) {
+    const h = json.hourly, at = new Map<number, number>(h.time.map((t: number, i: number) => [t * 1000, i]));
+    for (const m of models) {
+      const col = (k: string): (number | null)[] | undefined => h[`${k}_${MODEL_INFO[m].key}`] ?? (models.length === 1 ? h[k] : undefined);
+      const speed = col("wind_speed_10m");
+      if (!speed) continue;
+      const pick = (c?: (number | null)[]) => times.map((t) => { const i = at.get(t); return i == null ? null : c?.[i] ?? null; });
+      out.models[m] = { speed: pick(speed), gust: pick(col("wind_gusts_10m")), dir: pick(col("wind_direction_10m")) };
+    }
+  }
+  return out;
+}
+
+/** Keep the models a failed request would have brought, from what was loaded before, on the fresh time axis. */
+export function carryOver(fresh: ModelSeries, prev: ModelSeries): ModelSeries {
+  const at = new Map(prev.times.map((t, i) => [t, i]));
+  const models = { ...fresh.models };
+  for (const m of RAW_MODELS) {
+    const old = prev.models[m];
+    if (models[m] || !old) continue;
+    const pick = (c: (number | null)[]) => fresh.times.map((t) => { const i = at.get(t); return i == null ? null : c[i] ?? null; });
+    models[m] = { speed: pick(old.speed), gust: pick(old.gust), dir: pick(old.dir) };
+  }
+  return { ...fresh, models };
+}
+
+/** A raw model's forecast: each hour from the first model in its chain that has it (of the models that arrived). */
+export function chainForecast(s: ModelSeries, primary: RawModel): Forecast {
+  const chain = chainFor(primary), hours: Hour[] = [];
+  s.times.forEach((t, i) => {
+    for (const model of chain) {
+      const m = s.models[model], speed = m?.speed[i], gust = m?.gust[i], dir = m?.dir[i];
+      if (speed == null || gust == null || dir == null) continue;
+      hours.push({ t, speed, gust, dir, model });
+      break;
+    }
+  });
+  return { timeZone: s.timeZone, hours };
 }
 
 export function stationUrl(station: string) {
@@ -141,25 +222,6 @@ export function stationUrl(station: string) {
 }
 
 export const STATIONS_URL = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=met";
-
-/**
- * Open-Meteo response → hours. Each hour comes from the first model in the chain that has it
- * (multi-model responses suffix keys with the model name; a single-model response doesn't).
- */
-export function parseForecast(json: any, primary: Model = "hrrr"): Forecast {
-  const h = json.hourly, hours: Hour[] = [];
-  const col = (k: string, m: string) => h[`${k}_${m}`] ?? h[k] ?? [];
-  for (let i = 0; i < h.time.length; i++) {
-    for (const model of chainFor(primary)) {
-      const m = MODEL_INFO[model].key;
-      const s = col("wind_speed_10m", m)[i], g = col("wind_gusts_10m", m)[i], d = col("wind_direction_10m", m)[i];
-      if (s == null || g == null || d == null) continue;
-      hours.push({ t: h.time[i] * 1000, speed: s, gust: g, dir: d, model });
-      break;
-    }
-  }
-  return { timeZone: json.timezone, hours };
-}
 
 /** CO-OPS wind → observation. Values are strings, times "yyyy-MM-dd HH:mm" GMT; no-data stations send {error}. */
 export function parseObservation(json: any): Observation {
@@ -384,25 +446,22 @@ export function scoreForecast(hours: Hour[], obs: Obs[]): Score | null {
 
 /* ---------- Model comparison ---------- */
 
-export const MODELS = PRIMARY_MODELS.map((id) => ({ id, ...MODEL_INFO[id] }));
+/** The raw models, with their ids: what the comparison's spread and agreement are measured across. */
+export const MODELS = RAW_MODELS.map((id) => ({ id, ...MODEL_INFO[id] }));
+/** Every line on the Models chart: SeaSensei, then each raw model. */
+export const COMPARE_MODELS = PRIMARY_MODELS.map((id) => ({ id, ...MODEL_INFO[id] }));
 
+/** Speeds per model on one time axis, keyed by `MODEL_INFO[..].key` (so "sensei" for ours). */
 export type ModelCompare = { times: number[]; series: Record<string, (number | null)[]> };
 
-export function modelsUrl(lat: number, lon: number) {
-  const q = new URLSearchParams({
-    latitude: String(lat), longitude: String(lon), hourly: "wind_speed_10m", models: MODELS.map((m) => m.key).join(","),
-    wind_speed_unit: "kn", timeformat: "unixtime", timezone: "auto", forecast_days: "7", past_days: "1",
-  });
-  return `https://api.open-meteo.com/v1/forecast?${q}`;
-}
-
-export function parseModels(json: any): ModelCompare & { timeZone: string } {
-  const h = json.hourly;
-  return {
-    timeZone: json.timezone,
-    times: h.time.map((t: number) => t * 1000),
-    series: Object.fromEntries(MODELS.map((m) => [m.key, (h[`wind_speed_10m_${m.key}`] ?? []) as (number | null)[]])),
-  };
+/** The comparison for a spot: each raw model as it came, plus the SeaSensei line when given its hours. */
+export function compareSeries(s: ModelSeries, sensei?: Hour[]): ModelCompare & { timeZone: string } {
+  const series: ModelCompare["series"] = Object.fromEntries(MODELS.map((m) => [m.key, s.models[m.id]?.speed ?? []]));
+  if (sensei) {
+    const at = new Map(sensei.map((h) => [h.t, h.speed]));
+    series[MODEL_INFO.sensei.key] = s.times.map((t) => at.get(t) ?? null);
+  }
+  return { timeZone: s.timeZone, times: s.times, series };
 }
 
 /** Across the models that have a value at hour i: min, max, and the spread between them. */

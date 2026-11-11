@@ -1,5 +1,6 @@
 import { memo, useCallback, useMemo, type CSSProperties, type ReactNode } from "react";
 import { compass, handoffs, inArc, windColor, windGradient, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
+import { fmtRange } from "../lib/sensei";
 import { darkWord, isDaylightHour } from "../lib/session";
 import { useAt, useNow } from "../lib/time";
 import { DayNight, DrawIn, Handoffs, NowLine, Pill, RangeLines, SpeedGrid, TimeAxis, type Box } from "./charts/parts";
@@ -125,7 +126,7 @@ export const BarChart = memo(function BarChart({ forecast, spot, range, obs, scr
             <Bar row={cur} x={m.x} y={m.y} barW={m.barW} full />
             <line x1={m.x(cur.h.t)} x2={m.x(cur.h.t)} y1={T - 2} y2={H - B + 4} className="stroke-fg" strokeOpacity=".7" />
             <Pill x={m.x(cur.h.t)} y={1} minX={2} maxX={W - 2}>
-              <tspan className="fill-fg" fontWeight="600">{`${Math.round(cur.h.speed)} kn ${compass(cur.h.dir)}`}</tspan>
+              <tspan className="fill-fg" fontWeight="600">{`${Math.round(cur.h.speed)} kn${fmtRange(cur.h) ? ` (${fmtRange(cur.h)})` : ""} ${compass(cur.h.dir)}`}</tspan>
               {` · gusts ${Math.round(cur.h.gust)} · ${cur.st === "good" && !cur.day ? `in range, ${darkWord(spot.lat, spot.lon, cur.h.t)}` : STATUS_WORD[cur.st]}`}
             </Pill>
           </g>

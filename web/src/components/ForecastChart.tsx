@@ -1,5 +1,6 @@
 import { memo, useCallback, useMemo } from "react";
 import { handoffs, compass, windStops, windColor, type Forecast, type Hour, type Obs, type Spot } from "../lib/wind";
+import { fmtRange } from "../lib/sensei";
 import { useAt, useNow } from "../lib/time";
 import { DayNight, DrawIn, Handoffs, HatchDef, NowLine, Pill, RangeLines, Sessions, SpeedGrid, TimeAxis, type Box } from "./charts/parts";
 import { forecastSummary, fmtWhen, HOUR, nearestIndex, nightSpans, sessionSpans, speedTicks, speedTop, timeAxis, useSvgId } from "./charts/scale";
@@ -23,7 +24,7 @@ const LABEL: Record<Range, string> = { "24h": "Past 24 hours, forecast versus ac
 /**
  * The line chart: sustained wind as an area on the wind scale, gusts as a thin dashed line, the rider's daylight
  * sessions (the same runs as the session chips) as a go band, night shaded, model handoffs (NBM hatched), now in
- * accent, the station's readings in white when we have them, and a scrub cursor with a readout. `scrubT` is the
+ * accent, for SeaSensei the range the wind is likely to fall in as a soft neutral band behind the line, the station's readings in white when we have them, and a scrub cursor with a readout. `scrubT` is the
  * shared cursor: another chart's scrub, else the timeline's hour (shown only when it falls inside this range).
  */
 export const ForecastChart = memo(function ForecastChart({ forecast, spot, onScrub, range, obs, scrubT, maxH = 560, minH = 250 }: {
@@ -41,14 +42,20 @@ export const ForecastChart = memo(function ForecastChart({ forecast, spot, onScr
   const m = useMemo(() => {
     const t0 = hs[0].t, t1 = hs[hs.length - 1].t;
     const seen = (obs ?? []).filter((o) => o.t >= t0 && o.t <= t1);
-    const top = speedTop(spot.max, [...hs.map((h) => h.gust), ...seen.map((o) => o.speed)]);
+    const top = speedTop(spot.max, [...hs.map((h) => Math.max(h.gust, h.hi ?? 0)), ...seen.map((o) => o.speed)]);
     const x = (t: number) => L + ((t - t0) / (t1 - t0 || 1)) * (W - L - R);
     const y = (v: number) => T + (1 - v / top) * (H - T - B);
     const pts = (k: "speed" | "gust") => hs.map((h, i) => `${i ? "L" : "M"}${x(h.t).toFixed(1)},${y(h[k]).toFixed(1)}`).join("");
     const speed = pts("speed");
+    // SeaSensei's range (lo–hi), one closed shape per unbroken run of hours that carry one.
+    const ranged = hs.filter((h) => h.lo != null && h.hi != null);
+    const band = ranged.length > 1 && ranged.length === hs.length
+      ? hs.map((h, i) => `${i ? "L" : "M"}${x(h.t).toFixed(1)},${y(h.hi!).toFixed(1)}`).join("")
+        + hs.slice().reverse().map((h) => `L${x(h.t).toFixed(1)},${y(h.lo!).toFixed(1)}`).join("") + "Z"
+      : null;
     const nbm = hs.find((h, i) => i > 0 && h.model === "nbm"); // NBM after a sharper model: hatch it as lower confidence
     return {
-      t0, t1, top, x, y, seen, speed,
+      t0, t1, top, x, y, seen, speed, band,
       area: `${speed}L${x(t1).toFixed(1)},${y(0)}L${x(t0).toFixed(1)},${y(0)}Z`,
       gust: pts("gust"),
       ticks: speedTicks(top),
@@ -67,12 +74,12 @@ export const ForecastChart = memo(function ForecastChart({ forecast, spot, onScr
   const scrub = useScrub(times, tAtX, emit, shared ?? now);
 
   const summary = useMemo(() => {
-    const base = forecastSummary(hs, forecast.hours, spot, tz, now);
+    const base = forecastSummary(hs, forecast.hours, spot, tz, now) + (m.band ? " The shaded band is the range the wind is likely to fall in." : "");
     const keys = " The left and right arrow keys read each hour, with Shift six at a time; Escape clears.";
     if (range !== "24h" || m.seen.length < 2) return base + keys;
     const meas = m.seen.reduce((a, o) => (o.speed > a.speed ? o : a));
     return `${base} The station measured up to ${Math.round(meas.speed)} knots, drawn in white.${keys}`;
-  }, [hs, forecast.hours, spot, tz, now, range, m.seen]);
+  }, [hs, forecast.hours, spot, tz, now, range, m.seen, m.band]);
 
   if (!W) return <div ref={wrapRef} style={{ height: H }} />;
 
@@ -107,6 +114,7 @@ export const ForecastChart = memo(function ForecastChart({ forecast, spot, onScr
 
         <DrawIn id={ids.clip} drawKey={`line:${spot.id}`} W={W} H={H}>
           <path d={m.area} fill={`url(#${ids.grad})`} mask={`url(#${ids.mask})`} />
+          {m.band && <path d={m.band} data-range-band="" className="fill-fg/[.11]" />}
           <path d={m.gust} fill="none" strokeWidth="1.25" strokeDasharray="3 3" strokeLinecap="round" className="stroke-fg-2" />
           <path d={m.speed} fill="none" stroke={`url(#${ids.grad})`} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
           {/* what the station actually measured, over an ink halo so it reads on any colour */}
@@ -126,7 +134,7 @@ export const ForecastChart = memo(function ForecastChart({ forecast, spot, onScr
             {cObs && <circle cx={m.x(cObs.t)} cy={m.y(cObs.speed)} r="4" fill="white" strokeWidth="2" className="stroke-ink" />}
             <Pill x={m.x(c.t)} y={1} minX={2} maxX={W - 2}>
               <tspan className="fill-fg" fontWeight="600">{fmtWhen(c.t, tz)}</tspan>
-              {` · ${Math.round(c.speed)} kn ${compass(c.dir)} · gusts ${Math.round(c.gust)}`}
+              {` · ${Math.round(c.speed)} kn${fmtRange(c) ? ` (${fmtRange(c)})` : ""} ${compass(c.dir)} · gusts ${Math.round(c.gust)}`}
               {cObs ? ` · actual ${Math.round(cObs.speed)}` : ""}
             </Pill>
           </g>

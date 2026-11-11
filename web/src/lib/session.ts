@@ -1,5 +1,6 @@
 // The session engine: daylight, rideable sessions, a verdict per spot, ranking, and how much the models agree.
 // Pure like wind.ts: no DOM, no fetch, no React.
+import { sessionChance } from "./sensei";
 import { agreement, compass, inArc, isRideable, MODEL_INFO, type Hour, type Model, type ModelCompare, type Spot, type Window } from "./wind";
 
 const HOUR = 3600e3, DAY = 864e5, RAD = Math.PI / 180;
@@ -80,6 +81,8 @@ export type Session = Window & {
   /** gust − speed ≥ 10 kn in any hour, or gust ≥ 1.5 × speed at the peak */ gusty: boolean;
   /** model of the first hour */ model: Model;
   /** any hour from NBM */ lowConfidence: boolean;
+  /** How likely it is to deliver (0–1; see sensei.ts sessionChance). Only when the hours carry a range (SeaSensei). */
+  chance?: number;
 };
 
 export type SessionSpot = Pick<Spot, "lat" | "lon" | "min" | "max" | "dirC" | "dirW">;
@@ -90,9 +93,11 @@ export function meanDir(dirs: number[]) {
   return (Math.atan2(u, v) / RAD + 360) % 360;
 }
 
-function toSession(hs: Hour[]): Session {
+function toSession(hs: Hour[], spot: Pick<Spot, "min">): Session {
   const peakH = hs.reduce((a, h) => (h.speed > a.speed ? h : a));
+  const chance = sessionChance(hs, { start: hs[0].t, end: hs[hs.length - 1].t }, spot);
   return {
+    ...(chance != null ? { chance } : null),
     start: hs[0].t, end: hs[hs.length - 1].t, hours: hs,
     peak: peakH.speed,
     peakGust: Math.max(...hs.map((h) => h.gust)),
@@ -117,7 +122,7 @@ export function sessions(hours: Hour[], spot: SessionSpot, { from, minHours = 2 
     if (cur && h.t - cur[cur.length - 1].t <= HOUR) cur.push(h);
     else runs.push((cur = [h]));
   }
-  return runs.filter((r) => r.length >= minHours).map(toSession).filter((s) => from == null || s.end + HOUR > from);
+  return runs.filter((r) => r.length >= minHours).map((r) => toSession(r, spot)).filter((s) => from == null || s.end + HOUR > from);
 }
 
 /* ---------- Copy (en-US, in the spot's forecast time zone) ---------- */

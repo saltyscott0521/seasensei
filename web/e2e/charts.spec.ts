@@ -54,13 +54,13 @@ test("scrubbing a chart with the keyboard steps an hour at a time, and Escape cl
   await line.focus();
   await expect(line).toBeFocused();
   await page.keyboard.press("ArrowRight");
-  const readout = line.getByText(/^\w{3} \d{1,2} (AM|PM) · \d+ kn [NESW]+ · gusts \d+/);
+  const readout = line.getByText(/^\w{3} \d{1,2} (AM|PM) · \d+ kn \(\d+–\d+\) [NESW]+ · gusts \d+/); // SeaSensei: the speed and its range
   await expect(readout).toBeVisible();
   const first = (await readout.textContent())!;
   await page.keyboard.press("ArrowRight");
   await expect(readout).not.toHaveText(first);
   // the other chart follows the same cursor
-  await expect(page.locator('svg[aria-label^="Hourly wind bars"]').getByText(/\d+ kn [NESW]+/)).toBeVisible();
+  await expect(page.locator('svg[aria-label^="Hourly wind bars"]').getByText(/\d+ kn \(\d+–\d+\) [NESW]+/)).toBeVisible();
 
   await page.keyboard.press("Escape");
   await expect(readout).toBeHidden();
@@ -91,8 +91,9 @@ test("the model chart draws the primary model bold over the spread, and a tile b
   const chart = page.locator('svg[aria-label="Wind forecast by model"]');
   await expect(chart).toBeVisible();
   const line = (color: string) => chart.locator(`path[stroke="${color}"]`);
-  const HRRR = "#22d3ee", RRFS = "#f472b6";
-  await expect(line(HRRR)).toHaveAttribute("stroke-width", "2.75");
+  const SENSEI = "#f1f5f9", HRRR = "#22d3ee", RRFS = "#f472b6";
+  await expect(line(SENSEI)).toHaveAttribute("stroke-width", "2.75"); // SeaSensei leads by default
+  await expect(line(HRRR)).toHaveAttribute("stroke-width", "1.25");
   await expect(line(RRFS)).toHaveAttribute("stroke-width", "1.25");
   await expect(line(RRFS)).toHaveAttribute("stroke-opacity", "0.6");
 
@@ -101,6 +102,13 @@ test("the model chart draws the primary model bold over the spread, and a tile b
   await expect(tile).toHaveAttribute("aria-pressed", "true");
   await expect(line(RRFS)).toHaveAttribute("stroke-width", "2.75");
   await expect(line(HRRR)).toHaveAttribute("stroke-width", "1.25");
+  await expect(line(SENSEI)).toHaveAttribute("stroke-width", "1.25");
+  // and with a raw model picked to lead, that one is bold from the start
+  await page.getByRole("button", { name: "Forecast", exact: true }).click();
+  await page.getByRole("combobox", { name: "Forecast model" }).selectOption("hrrr");
+  await page.getByRole("button", { name: "Models" }).click();
+  await expect(line(HRRR)).toHaveAttribute("stroke-width", "2.75");
+  await expect(line(SENSEI)).toHaveAttribute("stroke-width", "1.25");
   await expect(page.getByText(/Next 48 h: .*(agree|disagree)/i)).toBeVisible();
 });
 
@@ -112,7 +120,7 @@ test("every chart tells a screen reader what it shows", async ({ page }) => {
   await page.getByRole("button", { name: "Past 24 h" }).click();
   await expect(page.locator('svg[aria-label*="forecast versus actual"]')).toHaveAccessibleDescription(/The station measured up to \d+ knots/);
   await page.getByRole("button", { name: "Models" }).click();
-  await expect(page.locator('svg[aria-label="Wind forecast by model"]')).toHaveAccessibleDescription(/HRRR \d+, RRFS \d+, NBM \d+, ECMWF \d+, GFS \d+/);
+  await expect(page.locator('svg[aria-label="Wind forecast by model"]')).toHaveAccessibleDescription(/SeaSensei \d+, HRRR \d+, RRFS \d+, NBM \d+, ECMWF \d+, GFS \d+/);
 });
 
 test("one key names every mark on the charts; wrong direction is hatched in the strip, as on the ribbons", async ({ page }) => {

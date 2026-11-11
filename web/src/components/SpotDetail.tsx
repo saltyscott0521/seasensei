@@ -197,7 +197,8 @@ export const SpotDetail = memo(function SpotDetail({ spot, onBack }: { spot: Spo
       </Rise>
 
       {!fc.isError && <Rise i={4}>
-        <Accuracy hours={fc.data ? windowFor(fc.data.hours, "24h") : undefined} obs={history.data}
+        {/* scored on what the forecast said (fc.base), not on hours already bent toward this same sensor */}
+        <Accuracy hours={fc.base ? windowFor(fc.base.hours, "24h") : undefined} obs={history.data}
           loading={fc.isPending || (history.isPending && !!refStation)} refName={refStation?.name} km={refStation?.km} />
       </Rise>}
 

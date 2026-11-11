@@ -49,8 +49,8 @@ test("sessions read as a schedule, and picking one puts the charts and the hour 
   const sessions = page.getByRole("button", { name: /Show on the charts$/ });
   await expect(sessions.first()).toBeVisible();
   expect(await sessions.count()).toBeGreaterThanOrEqual(4);
-  // later in the week the forecast leans on the NBM blend, and says so
-  await expect(page.getByRole("button", { name: /NBM blend, lower confidence/ }).first()).toBeVisible();
+  // SeaSensei blends every model all week: no session is marked down for leaning on the NBM blend (app.spec.ts covers a raw model)
+  await expect(page.getByRole("button", { name: /NBM blend, lower confidence/ })).toHaveCount(0);
 
   // four sessions on is more than two days away: the charts widen to the week to show it
   const row = sessions.nth(3);
@@ -60,7 +60,7 @@ test("sessions read as a schedule, and picking one puts the charts and the hour 
   await expect(row).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "7 days" })).toHaveAttribute("aria-pressed", "true");
   const bars = page.locator('svg[aria-label^="Hourly wind bars"]');
-  await expect(bars.getByText(/\d+ kn [NESW]+/)).toBeVisible(); // the chart cursor's readout
+  await expect(bars.getByText(/\d+ kn \(\d+–\d+\) [NESW]+/)).toBeVisible(); // the chart cursor's readout
 
   // the hour grid marks the same hour, inside the session
   const marked = hourTable(page).locator('th[aria-current="time"]');
@@ -100,14 +100,14 @@ test("the hour grid is a real table from now: night shaded, the mouse wheel scro
 test("one clock: the timeline's hour drives the hero and the hour grid", async ({ page }) => {
   await openSpot(page, "Fort De Soto");
   const panel = page.locator("aside");
-  await expect(panel.getByText("HRRR said for this hour")).toBeVisible();
+  await expect(panel.getByText("SeaSensei said for this hour")).toBeVisible();
   const slider = page.getByRole("slider", { name: "Forecast time" });
   await slider.focus();
   for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowRight");
 
-  const line = panel.getByText(/^(Today|[A-Z][a-z]{2}) \d+ (AM|PM) · HRRR forecast$/);
+  const line = panel.getByText(/^(Today|[A-Z][a-z]{2}) \d+ (AM|PM) · SeaSensei forecast$/);
   await expect(line).toBeVisible();
-  await expect(panel.getByText("HRRR said for this hour")).toHaveCount(0); // a forecast hour has nothing live to compare
+  await expect(panel.getByText("SeaSensei said for this hour")).toHaveCount(0); // a forecast hour has nothing live to compare
   const hour = (await line.textContent())!.match(/\d+ (AM|PM)/)![0];
   await expect(hourTable(page).locator('th[aria-current="time"]')).toHaveText(hour);
 

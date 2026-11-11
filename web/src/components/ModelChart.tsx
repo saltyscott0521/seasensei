@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { usePrimaryModel } from "../lib/data";
 import { useAt, useNow } from "../lib/time";
 import { AGREEMENT_WORDS, confidence } from "../lib/session";
-import { MODELS, spreadAt, type Model, type ModelCompare, type Spot } from "../lib/wind";
+import { COMPARE_MODELS, spreadAt, type Model, type ModelCompare, type Spot } from "../lib/wind";
 import { DayNight, DrawIn, NowLine, Pill, RangeLines, SpeedGrid, TimeAxis, type Box } from "./charts/parts";
 import { fmtWhen, HOUR, nightSpans, speedTicks, speedTop, timeAxis, useSvgId } from "./charts/scale";
 import { useScrub } from "./charts/useScrub";
@@ -14,8 +14,8 @@ import { useChartSize } from "./useChartSize";
 const B = 24;
 
 /**
- * HRRR, RRFS, NBM, ECMWF and GFS on one axis. The shaded band is the spread between them (a free confidence
- * signal); the rider's primary model is drawn bold and the others thin, and tapping a model's tile brings its line
+ * SeaSensei and the raw models (HRRR, RRFS, NBM, ECMWF, GFS) on one axis. The shaded band is the spread between the
+ * raw models (a free confidence signal); the rider's primary model is drawn bold and the others thin, and tapping a model's tile brings its line
  * forward instead. The cursor follows a scrub here, else the timeline's hour.
  */
 export const ModelChart = memo(function ModelChart({ data, spot, range, tz, maxH = 560, minH = 250 }: { data: ModelCompare; spot: Spot; range: Range; tz: string; maxH?: number; minH?: number }) {
@@ -37,7 +37,7 @@ export const ModelChart = memo(function ModelChart({ data, spot, range, tz, maxH
 
   const m = useMemo(() => {
     const t0 = data.times[idx[0]], t1 = data.times[idx[idx.length - 1]];
-    const all = idx.flatMap((i) => MODELS.map((mm) => data.series[mm.key]?.[i]).filter((v): v is number => v != null));
+    const all = idx.flatMap((i) => COMPARE_MODELS.map((mm) => data.series[mm.key]?.[i]).filter((v): v is number => v != null));
     const top = speedTop(spot.max, all);
     const x = (t: number) => L + ((t - t0) / (t1 - t0 || 1)) * (W - L - R);
     const y = (v: number) => T + (1 - v / top) * (H - T - B);
@@ -57,7 +57,7 @@ export const ModelChart = memo(function ModelChart({ data, spot, range, tz, maxH
       : "";
     return {
       t0, t1, top, x, y, band,
-      paths: MODELS.map((mm) => ({ ...mm, d: path(mm.key) })),
+      paths: COMPARE_MODELS.filter((mm) => data.series[mm.key]).map((mm) => ({ ...mm, d: path(mm.key) })),
       ticks: speedTicks(top),
       axis: timeAxis(t0, t1, tz, x, W - L - R),
       nights: nightSpans(spot.lat, spot.lon, t0, t1),
@@ -82,7 +82,7 @@ export const ModelChart = memo(function ModelChart({ data, spot, range, tz, maxH
   const nowX = now >= m.t0 && now <= m.t1 ? m.x(now) : null;
 
   const summary = `${ag ? `Over the next 48 hours: ${AGREEMENT_WORDS[ag.level].toLowerCase()}, a ${Math.round(ag.spread)} knot spread. ` : ""}`
-    + `${fmtWhen(data.times[shownI], tz)}: ${MODELS.map((mm) => { const v = data.series[mm.key]?.[shownI]; return `${mm.label} ${v == null ? "no data" : Math.round(v)}`; }).join(", ")}.`;
+    + `${fmtWhen(data.times[shownI], tz)}: ${m.paths.map((mm) => { const v = data.series[mm.key]?.[shownI]; return `${mm.label} ${v == null ? "no data" : Math.round(v)}`; }).join(", ")}.`;
 
   const chip = (a: NonNullable<typeof ag>, when: string) => (
     <Chip size="sm" icon={<ConfidenceDots level={a.level} aria-hidden />}>{when}: {AGREEMENT_WORDS[a.level].toLowerCase()} · {Math.round(a.spread)} kn spread</Chip>
@@ -128,8 +128,8 @@ export const ModelChart = memo(function ModelChart({ data, spot, range, tz, maxH
       </div>
       <p id={ids.desc} hidden>{summary}</p>
 
-      <div className="mt-2 grid grid-cols-5 gap-1.5">
-        {MODELS.map((mm) => {
+      <div className="mt-2 grid grid-cols-3 gap-1.5">
+        {m.paths.map((mm) => {
           const v = data.series[mm.key]?.[shownI];
           const on = mm.id === lead;
           return (

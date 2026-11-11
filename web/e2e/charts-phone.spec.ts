@@ -65,7 +65,7 @@ test("phone: a tap on a chart reads that hour, and the reading stays a moment af
   }).toBe(true);
   const box = (await line.boundingBox())!;
   await page.touchscreen.tap(box.x + box.width * 0.6, box.y + box.height / 2);
-  const readout = line.getByText(/^\w{3} \d{1,2} (AM|PM) · \d+ kn [NESW]+ · gusts \d+/);
+  const readout = line.getByText(/^\w{3} \d{1,2} (AM|PM) · \d+ kn \(\d+–\d+\) [NESW]+ · gusts \d+/);
   await expect(readout).toBeVisible();
   await page.waitForTimeout(1500);
   await expect(readout).toBeVisible(); // still there after lifting

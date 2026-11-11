@@ -249,8 +249,10 @@ test("while the timeline points elsewhere, a card's verdict steps back and its r
 
 test("wind over the range right now reads \"Too strong now\" on the card and the hero, as on the map", async ({ page }) => {
   // Midday ET (17:00 UTC), inside the forecast session; Picnic Island (15–24.5 kn) has its own sensor reading 31 kn.
+  // On a raw model (HRRR picked) the forecast still calls it on; SeaSensei would bend to the sensor (forecast.spec.ts).
   const d = new Date(), noon = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 17);
   await page.clock.setFixedTime(noon);
+  await page.addInitScript(() => localStorage.setItem("primaryModel", "hrrr"));
   await seed(page, [SEEDED[0], SEEDED[1], { ...SEEDED[2], max: 24.5 }]);
   await mockApis(page);
   await page.route("https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?**", (route) => {

@@ -22,7 +22,7 @@ test("the panel docks full height on the left with the brand and status on top",
   expect(aside.width).toBe(420);
   expect(Math.round(aside.y + aside.height)).toBe(vp.height - 16);
   await expect(panel(page).getByRole("heading", { name: "SeaSensei" })).toBeVisible();
-  await expect(panel(page).getByText("Now · HRRR forecast")).toBeVisible();
+  await expect(panel(page).getByText("Now · SeaSensei forecast")).toBeVisible();
   // Add and Stations are a small group at the map's top right
   const add = await box(page.getByRole("button", { name: "Add a spot" }));
   expect(add.y).toBeLessThan(40);

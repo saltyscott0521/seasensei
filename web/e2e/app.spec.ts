@@ -15,7 +15,7 @@ test("opens on the map with the three Tampa Bay spots, live stations and a wind 
   await expect(page.getByRole("heading", { name: "Skyway" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Picnic Island" })).toBeVisible();
   await expect(page.locator(".maplibregl-canvas")).toBeVisible();
-  await expect(page.getByText("Now · HRRR forecast")).toBeVisible();
+  await expect(page.getByText("Now · SeaSensei forecast")).toBeVisible();
   // one marker per spot + NOAA sensors and the airport from the mocks
   await expect(page.locator(".maplibregl-marker")).toHaveCount(3 + 3 + 1);
   await expect(page.getByLabel(/Old Port Tampa: \d+ knots/)).toBeVisible();
@@ -28,10 +28,14 @@ test("opens on the map with the three Tampa Bay spots, live stations and a wind 
   await expect(page.locator(".maplibregl-marker")).toHaveCount(3);
 });
 
-test("a spot's detail: live vs model, 7 days through RRFS to NBM, forecast vs actual, model comparison", async ({ page }) => {
+test("a spot's detail on a raw model: live vs model, 7 days through RRFS to NBM, forecast vs actual, model comparison", async ({ page }) => {
+  // HRRR picked to lead (SeaSensei, the default, is one blended line with no handoffs: see forecast.spec.ts)
+  await page.getByRole("combobox", { name: "Forecast model" }).selectOption("hrrr");
   await openSpot(page, "Picnic Island");
   await expect(page.getByText(/Live · Old Port Tampa/)).toBeVisible();
   await expect(page.getByText("HRRR said for this hour")).toBeVisible();
+  // later in the week the forecast leans on the NBM blend, and its sessions say so
+  await expect(page.getByRole("button", { name: /NBM blend, lower confidence/ }).first()).toBeVisible();
 
   await page.getByRole("button", { name: "7 days" }).click();
   await expect(page.getByText("NBM · lower confidence")).toBeVisible();
@@ -76,13 +80,13 @@ test("a spot's detail: live vs model, 7 days through RRFS to NBM, forecast vs ac
   await expect(dialog).toBeHidden();
 
   await page.getByRole("button", { name: "Models" }).click();
-  for (const m of ["HRRR", "RRFS", "NBM", "ECMWF", "GFS"]) await expect(page.getByText(m, { exact: true }).first()).toBeVisible();
+  for (const m of ["SeaSensei", "HRRR", "RRFS", "NBM", "ECMWF", "GFS"]) await expect(page.getByText(m, { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/Next 48 h: .*(agree|disagree)/i)).toBeVisible();
 });
 
 test("wind direction: a spot only counts hours from a workable direction", async ({ page }) => {
   await openSpot(page, "Fort De Soto");
-  const chips = page.locator("span[title^='HRRR'], span[title^='RRFS'], span[title^='NBM']");
+  const chips = page.locator("span[title^='SeaSensei'], span[title^='HRRR'], span[title^='RRFS'], span[title^='NBM']");
   await expect(chips.first()).toBeVisible(); // mock wind is SW and reaches 24 kn, so there are windows
 
   await page.getByRole("button", { name: "Spot settings" }).click();
@@ -157,7 +161,7 @@ test("the timeline scrubs the week: header, markers and station layer follow the
   const max = Number(await slider.getAttribute("aria-valuemax"));
   await expect.poll(async () => Math.abs(Number(await slider.getAttribute("aria-valuenow")) - max / 2)).toBeLessThan(4);
   await page.getByRole("button", { name: "Back to now" }).click();
-  await expect(page.getByText("Now · HRRR forecast")).toBeVisible();
+  await expect(page.getByText("Now · SeaSensei forecast")).toBeVisible();
   // The map follows the hour a beat after the status (it reads a deferred copy); live stations only show at "now".
   await expect(page.getByLabel(/Old Port Tampa: \d+ knots/)).toBeVisible();
   const fds = page.locator(".maplibregl-marker button[aria-label^='Fort De Soto']");
@@ -175,22 +179,26 @@ test("the timeline scrubs the week: header, markers and station layer follow the
   await page.getByRole("button", { name: "Pause" }).click();
 
   await page.getByRole("button", { name: "Back to now" }).click();
-  await expect(page.getByText("Now · HRRR forecast")).toBeVisible();
+  await expect(page.getByText("Now · SeaSensei forecast")).toBeVisible();
   await expect(page.getByLabel(/Old Port Tampa: \d+ knots/)).toBeVisible();
 });
 
 test("switching the primary model changes the map, timeline and spot forecasts, and is remembered", async ({ page }) => {
-  const asked: string[] = [];
-  page.on("request", (r) => { if (r.url().startsWith("https://api.open-meteo.com/")) asked.push(new URL(r.url()).searchParams.get("models") ?? ""); });
+  const asked: URL[] = [];
+  page.on("request", (r) => { if (r.url().startsWith("https://api.open-meteo.com/")) asked.push(new URL(r.url())); });
   const picker = page.getByRole("combobox", { name: "Forecast model" });
-  await expect(picker).toHaveValue("hrrr");
-  await expect(picker.locator("option:checked")).toHaveText("HRRR → RRFS → NBM");
+  await expect(picker).toHaveValue("sensei");
+  await expect(picker.locator("option:checked")).toHaveText("SeaSensei");
+  await expect(picker.locator("option")).toHaveText(["SeaSensei", "HRRR → RRFS → NBM", "RRFS → NBM", "NBM", "ECMWF", "GFS"]);
+  await expect(page.locator("[data-spot-card] [data-verdict]")).toHaveCount(3); // every spot's models are in
 
-  // RRFS first: the map field and the spots ask for RRFS then NBM, and the header says so
+  // RRFS first: the map field asks for RRFS then NBM, and the header says so. The spots ask for nothing: every
+  // model at a spot is already loaded, so their forecasts switch on the spot.
   asked.length = 0;
   await picker.selectOption("rrfs");
   await expect(page.getByText("Now · RRFS forecast")).toBeVisible();
-  await expect.poll(() => asked.filter((m) => m === "ncep_rrfs_conus,ncep_nbm_conus").length).toBeGreaterThan(1);
+  await expect.poll(() => asked.filter((u) => u.searchParams.get("models") === "ncep_rrfs_conus,ncep_nbm_conus").length).toBe(1);
+  expect(asked.filter((u) => u.searchParams.has("past_days"))).toHaveLength(0);
   await page.getByRole("slider", { name: "Forecast time" }).focus();
   for (let i = 0; i < 30; i++) await page.keyboard.press("ArrowRight");
   await expect(page.getByText("RRFS", { exact: true })).toBeVisible(); // the timeline's model chip

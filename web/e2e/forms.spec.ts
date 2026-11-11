@@ -144,7 +144,7 @@ test("spot settings: the station choice is a radio list with Auto, nearby statio
 
   await group.getByRole("radio", { name: "No station — forecast only" }).check();
   await expect.poll(async () => (await storedSpot(page, "Fort De Soto")).station).toBe("none");
-  await expect(group.getByRole("radio", { name: "No station — forecast only" })).toHaveAccessibleDescription(/HRRR forecast/);
+  await expect(group.getByRole("radio", { name: "No station — forecast only" })).toHaveAccessibleDescription(/SeaSensei forecast/);
 
   await auto.check();
   await expect.poll(async () => (await storedSpot(page, "Fort De Soto")).station).toBeUndefined();
