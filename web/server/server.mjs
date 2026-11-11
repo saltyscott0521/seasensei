@@ -1,6 +1,7 @@
 // SeaSensei's server: the built app (dist/), the daily wind discussion (JSON API, archive, RSS) and the
-// scheduler that writes it, and the forecast-run archive (archive.mjs, to R2). No framework; Node core only,
-// plus the Anthropic SDK in discussion.mjs and aws4fetch (R2 request signing) in archive.mjs.
+// scheduler that writes it, the forecast-run archive (archive.mjs, to R2), the station observations (observe.mjs)
+// and the learning that turns the two into /api/calibration (calibrate.mjs). No framework; Node core only,
+// plus the Anthropic SDK in discussion.mjs and aws4fetch (R2 request signing) in r2.mjs.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,6 +11,8 @@ import { configured } from "./discussion.mjs";
 import { describeError, publish, startScheduler, status } from "./publish.mjs";
 import * as store from "./store.mjs";
 import * as archive from "./archive.mjs";
+import * as observe from "./observe.mjs";
+import * as calibrate from "./calibrate.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(process.env.DIST_DIR ?? path.join(here, "..", "dist"));
@@ -21,6 +24,36 @@ const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".mjs": "application/javascript",
   ".css": "text/css", ".json": "application/json", ".webmanifest": "application/manifest+json",
   ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".txt": "text/plain",
+};
+
+/**
+ * Sent with every response. The Content-Security-Policy lists what the built app really loads: its own scripts,
+ * styles and workers (MapLibre's worker is a same-origin module; blob: covers its fallback), inline styles (the
+ * first-paint <style> in index.html and React's style attributes), Geist from Google Fonts, map style, tiles,
+ * glyphs and sprites from OpenFreeMap, wind and stations from Open-Meteo, NOAA and IEM, and Cloudflare's
+ * analytics beacon. CSP_REPORT_ONLY=1 turns it into a report-only header without a deploy of new code.
+ */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://static.cloudflareinsights.com",
+  "worker-src 'self' blob:",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: blob: https://tiles.openfreemap.org",
+  "connect-src 'self' https://api.open-meteo.com https://api.tidesandcurrents.noaa.gov https://mesonet.agron.iastate.edu https://api.weather.gov https://tiles.openfreemap.org https://cloudflareinsights.com",
+  "manifest-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Strict-Transport-Security": "max-age=31536000",
+  "Permissions-Policy": "geolocation=(self), camera=(), microphone=(), payment=()",
+  "X-Frame-Options": "DENY",
+  [process.env.CSP_REPORT_ONLY === "1" ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy"]: CSP,
 };
 
 function sendJson(res, status, body, cache = "no-store") {
@@ -108,12 +141,14 @@ function route(req, res) {
   if (p === "/api/discussion") return handleDiscussion(url, res);
   if (p === "/api/discussions") return sendJson(res, 200, { items: store.list(), ...meta() }, "public, max-age=300");
   if (p === "/feed.xml") return feed(res);
-  if (p === "/api/archive") return sendJson(res, 200, archive.status());
+  if (p === "/api/calibration") return sendJson(res, 200, calibrate.calibration(), "public, max-age=600");
+  if (p === "/api/archive") return sendJson(res, 200, { ...archive.status(), observations: observe.status(), learning: calibrate.status() });
   serveStatic(req, res);
 }
 
 // A bad request must never take the process down (it also runs the schedulers): "//" and a broken percent-escape both throw.
 const server = http.createServer((req, res) => {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
   try { route(req, res); }
   catch (e) {
     const bad = e instanceof URIError || (e instanceof TypeError && /Invalid URL/i.test(e.message));
@@ -130,4 +165,5 @@ server.listen(PORT, () => {
   console.log(`seasensei on :${PORT} · dist=${DIST} · discussion ${configured() ? `enabled, publishes ${status().publishHour}:00 ${status().timeZone}` : "disabled (no ANTHROPIC_API_KEY)"} · admin ${ADMIN_TOKEN ? "on" : "off"} · forecast archive ${archive.configured() ? `to R2 bucket ${process.env.R2_BUCKET}` : "off (no R2 settings)"}`);
   startScheduler();
   archive.startArchive();
+  calibrate.startLearning();
 });
