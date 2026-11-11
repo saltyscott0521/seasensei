@@ -4,7 +4,7 @@ import { ChevronRight, MapPin, RotateCw, Star } from "lucide-react";
 import { memo, useId, useMemo, type CSSProperties, type FocusEvent } from "react";
 import { duration, ease } from "../../lib/motion";
 import { useModelCompare } from "../../lib/data";
-import { confidence, fmtDay, fmtHour, fmtKm, fmtSpan, fmtStrength, fmtWindow, NEARBY_WARN_KM, nowVerdict, sameDay, type Session } from "../../lib/session";
+import { ago, chanceOf, confidence, fmtDay, fmtHour, fmtKm, fmtSpan, fmtStrength, fmtWindow, NEARBY_WARN_KM, sameDay, type Session } from "../../lib/session";
 import { useNow } from "../../lib/time";
 import { useSpotNow, type RankedSpot } from "../../lib/useSpotNow";
 import { windColor, type Spot } from "../../lib/wind";
@@ -40,16 +40,17 @@ export const SpotCard = memo(function SpotCard({ row, onSelect, best = false, on
   const all = useMemo(() => (hours ? allSessions(hours, spot) : []), [hours, spot]);
   const ribbon = useMemo(() => (hours && tz ? dayRibbon(hours, spot, all, now, tz) : null), [hours, spot, all, now, tz]);
   const week = useMemo(() => (hours && tz ? weekCells(hours, spot, all, now, tz) : null), [hours, spot, all, now, tz]);
-  // The verdict about now; wind over the range right now reads "Too strong now", as on the map.
-  const pill = verdict && hours && tz
-    ? nowVerdict(verdict, sn.now?.speed, spot, verdict.state === "none" ? noneDetail(hours, spot, now, tz) : verdict.detail)
-    : null;
-  const detail = pill?.detail ?? "";
+  // The verdict about now, checked against the spot's own sensor ("On now · 18 kn at the sensor · till 4 PM"); wind
+  // over the range right now reads "Too strong now", as on the map. A spot with no session says why.
+  const pill = verdict && hours && tz ? sn.pill : null;
+  const detail = pill ? (pill.by === "forecast" && verdict!.state === "none" ? noneDetail(hours!, spot, now, tz!) : pill.detail) : "";
   const scrubbed = sn.at != null;
   const failed = status === "error" && !forecast;
   const answer = best && verdict && hours && tz ? answerFor(row, now, all) : null;
-  // How sure, for the top spot's session only: one model comparison (the detail reuses it).
-  const sess = answer ? verdict!.session : null;
+  // How sure: the session's chance in a word, on every card (it comes with the SeaSensei forecast). A raw model has
+  // none, so the top spot's session falls back to how well the models agree (one comparison; the detail reuses it).
+  const chance = pill && pill.state !== "strong" ? chanceOf(verdict!.session) : null;
+  const sess = answer && !chance ? verdict!.session : null;
   const models = useModelCompare(sess ? spot : undefined);
   const conf = sess ? confidence(models.data, sess.start, sess.end + HOUR) : null;
   // The day's answer is a go (the best spot is on today): its detail is the big line. The go wash and tab only while
@@ -85,6 +86,7 @@ export const SpotCard = memo(function SpotCard({ row, onSelect, best = false, on
             <VerdictPill state={pill?.state ?? verdict.state} label={pill?.label ?? verdict.label} muted={scrubbed} />
             {detail && <span className={clsx("num min-w-0", goAnswer ? "text-body font-medium text-fg" : "text-label text-fg-2")}>{detail}</span>}
             {/* phones: the dots ride at the end of the strip below, so this row stays one line at 375 px at any hour */}
+            {chance && <ChanceWord word={chance} className="ml-auto max-md:hidden" />}
             {conf && <ConfidenceDots level={conf.level} label={conf.label} className="ml-auto max-md:hidden" />}
           </motion.div>
         ) : (
@@ -103,6 +105,7 @@ export const SpotCard = memo(function SpotCard({ row, onSelect, best = false, on
               <Ribbon cells={ribbon.cells} nowIndex={ribbon.nowIndex} height={8} label={ribbon.label}
                 className={clsx("min-w-0 flex-1", ribbon.day !== "Today" && "opacity-60")} />
               <span aria-hidden className="num hidden shrink-0 whitespace-nowrap md:inline">{ribbon.to}</span>
+              {chance && <ChanceWord word={chance} className="md:hidden" />}
               {conf && <ConfidenceDots level={conf.level} label={conf.label} className="md:hidden" />}
             </motion.div>
           ) : failed ? <div aria-hidden className="h-2 flex-1 rounded-full bg-line" /> : <Skeleton className="h-2 flex-1 rounded-full" />}
@@ -127,6 +130,11 @@ export const SpotCard = memo(function SpotCard({ row, onSelect, best = false, on
 
 type AnswerText = { kicker: string; rest: string };
 
+/** How likely the session is, in a word (neutral ink: how sure is a different question from whether it's rideable). */
+function ChanceWord({ word, className }: { word: string; className?: string }) {
+  return <span data-testid="chance" className={clsx("shrink-0 whitespace-nowrap text-caption font-medium leading-none text-fg-2", className)}>{word}</span>;
+}
+
 /** `:focus-visible`, where the browser knows it (keyboard focus, not focus a script put back after a click). */
 const focusVisible = (el: Element) => { try { return el.matches(":focus-visible"); } catch { return true; } };
 
@@ -141,7 +149,8 @@ function answerFor(row: RankedSpot, now: number, all: Session[]): AnswerText {
   const go = v.state === "on" || v.state === "today";
   const done = all.some((x) => sameDay(x.start, now, tz) && x.end + HOUR <= now);
   const kicker = go ? "Best today" : v.state === "upcoming" ? (done ? "Done today" : "No session today") : "No session this week";
-  const what = s
+  const what = !s && v.state === "on" ? v.detail // on by the sensor, with no forecast session behind it
+    : s
     ? go ? `${fmtSpan(s.start, s.end + HOUR, tz)} · ${fmtStrength(s)}` : `${fmtWindow(s, tz, now)} · ${fmtStrength(s)}`
     : noneDetail(row.forecast!.hours, row.spot, now, tz);
   return { kicker, rest: [row.spot.name, what].filter(Boolean).join(" · ") };
@@ -173,7 +182,7 @@ function Reading({ id, spot, sn, tz, now }: { id: string; spot: Spot; sn: Return
   const far = !scrubbed && sn.source === "nearby" && sn.km != null && sn.km > NEARBY_WARN_KM;
   const label = scrubbed
     ? `${fmtDay(sn.at!, tz, now)} ${fmtHour(sn.at!, tz)}`
-    : sn.source === "station" ? "Live" : sn.source === "nearby" ? `Nearby${sn.km != null ? ` · ${fmtKm(sn.km)}` : ""}` : "Now";
+    : sn.source === "station" ? (sn.live ? "Live" : ago(sn.now!.t, now)) : sn.source === "nearby" ? `Nearby${sn.km != null ? ` · ${fmtKm(sn.km)}` : ""}` : "Now";
   const speed = Math.round(s.speed), gust = s.gust != null ? Math.round(s.gust) : null;
   return (
     <span id={id} className="ml-auto flex shrink-0 items-center gap-1.5 text-caption text-fg-3" data-testid="spot-reading">

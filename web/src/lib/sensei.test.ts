@@ -22,8 +22,8 @@ describe("the SeaSensei blend", () => {
     const series: ModelSeries = { timeZone: "UTC", times: [0, HOUR], models: { hrrr: s([10, null]), nbm: s([20, 20]), gfs: s([14, 14]) } };
     const cal = structuredClone(FALLBACK_CALIBRATION);
     cal.pooled.models.hrrr.mae = [1, 1, 1, 1]; cal.pooled.models.nbm.mae = [2, 2, 2, 2]; cal.pooled.models.gfs.mae = [2, 2, 2, 2];
-    const [a, b] = buildSensei(series, cal, { lat: 27.6, lon: -82.7 }, 0);
-    expect(a.speed).toBeCloseTo((10 * 4 + 20 + 14) / 6); // weights 1/mae²: 1, ¼, ¼
+    const [a, b] = buildSensei(series, cal, {}, 0);
+    expect(a.speed).toBeCloseTo((10 * 16 + 20 + 14) / 18); // weights 1/mae⁴: 1, 1⁄16, 1⁄16
     expect(b.speed).toBeCloseTo(17); // HRRR gone: NBM and GFS share it equally
     expect(b.gust).toBeCloseTo(17 * 1.5);
     expect([a.model, b.model]).toEqual(["sensei", "sensei"]);

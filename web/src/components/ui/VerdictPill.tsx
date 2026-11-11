@@ -1,13 +1,14 @@
 import clsx from "clsx";
-import { ArrowUp, CalendarDays, Clock3, Navigation2Off } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, Clock3, Navigation2Off } from "lucide-react";
 import type { ComponentPropsWithRef } from "react";
 import { chipClass, type ChipSize, type Tone } from "./Chip";
 
 /**
  * The verdict for a spot. `on` / `today` / `upcoming` / `none` are the session engine's `Verdict.state`;
- * `strong` and `wrongdir` are for an hour (or now) that is too strong, or blowing from the wrong direction.
+ * `strong` and `wrongdir` are for an hour (or now) that is too strong, or blowing from the wrong direction; `light`
+ * is for a forecast session the spot's own sensor doesn't bear out yet ("Too light now").
  */
-export type VerdictState = "on" | "today" | "upcoming" | "none" | "strong" | "wrongdir";
+export type VerdictState = "on" | "today" | "upcoming" | "none" | "strong" | "wrongdir" | "light";
 
 /**
  * Each state's colour role — the one mapping the whole app uses (cards, hero, map markers):
@@ -17,10 +18,11 @@ export type VerdictState = "on" | "today" | "upcoming" | "none" | "strong" | "wr
  *   none     off, with a hollow ring               ("No session this week")
  *   strong   strong, with an up arrow              ("Too strong")
  *   wrongdir wrongdir, with a crossed-out arrow    ("Wrong direction")
- * Amber (`soon`) is not a verdict: it is kept for marginal hours and lower confidence.
+ *   light    soon (amber), with a down arrow       ("Too light now": the forecast says on, the sensor doesn't — in doubt)
+ * Amber (`soon`) is otherwise not a verdict: it is kept for marginal hours and doubt.
  */
 export const VERDICT_TONE: Record<VerdictState, Tone> = {
-  on: "go", today: "go", upcoming: "neutral", none: "off", strong: "strong", wrongdir: "wrongdir",
+  on: "go", today: "go", upcoming: "neutral", none: "off", strong: "strong", wrongdir: "wrongdir", light: "soon",
 };
 
 /** "today" is the go hue as an outline: the same good news as "on", told apart by its clock and its hollow fill. */
@@ -36,6 +38,7 @@ function Glyph({ state, size }: { state: VerdictState; size: ChipSize }) {
     case "today": return <Clock3 aria-hidden strokeWidth={2.25} />;
     case "upcoming": return <CalendarDays aria-hidden strokeWidth={2.25} className="text-fg-3" />;
     case "strong": return <ArrowUp aria-hidden strokeWidth={2.5} />;
+    case "light": return <ArrowDown aria-hidden strokeWidth={2.5} />;
     case "wrongdir": return <Navigation2Off aria-hidden strokeWidth={2.25} />;
   }
 }

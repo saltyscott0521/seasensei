@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
-import { memo, startTransition, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useObsHistory, useSpotModelCompare } from "../lib/data";
 import { useDesktop } from "../lib/layout";
 import { duration, ease, spring, stagger } from "../lib/motion";
@@ -10,15 +10,19 @@ import type { Hour, Spot } from "../lib/wind";
 import { windowFor, type Range } from "./ForecastChart";
 import { Skeleton } from "./bits";
 import { ScrollFade } from "./ui/ScrollFade";
+import { allSessions, type WeekCell } from "./home/board";
 import { Accuracy } from "./spot/Accuracy";
 import { ChartBody, ChartCard, type ChartView } from "./spot/ChartCard";
 import { atLine, peakHour } from "./spot/format";
 import { FullscreenCharts } from "./spot/FullscreenCharts";
 import { HourGrid } from "./spot/HourGrid";
+import { HowSure } from "./spot/HowSure";
 import { Sessions } from "./spot/Sessions";
 import { SpotHeader } from "./spot/SpotHeader";
 import { SpotHero, type HeroSource } from "./spot/SpotHero";
 import { SpotSettings } from "./spot/SpotSettings";
+import { useShore } from "./spot/shore";
+import { WeekStrip } from "./spot/WeekStrip";
 import { useSubLayer } from "./spot/useSubLayer";
 
 const HOUR = 3600e3;
@@ -56,7 +60,9 @@ function Rise({ i, children }: { i: number; children: ReactNode }) {
  * the charts and the forecast check. The chart scrub, else the timeline's hour, is the one cursor for all of them.
  */
 export const SpotDetail = memo(function SpotDetail({ spot, onBack }: { spot: Spot; onBack: () => void }) {
-  const { fc, ob, model, now, sessions, verdict, source, sensor, at, shown } = useSpotNow(spot);
+  const { fc, ob, model, now, sessions, verdict, pill, live, source, sensor, at, shown } = useSpotNow(spot);
+  // Which way the shore faces, where the coastline can tell (worked out once per pin, then remembered).
+  const seaward = useShore(spot, true);
   const clock = useNow();
   const desktop = useDesktop();
   const [scrub, setScrub] = useState<Hour | null>(null);
@@ -87,7 +93,7 @@ export const SpotDetail = memo(function SpotDetail({ spot, onBack }: { spot: Spo
   const when = forecastAt && heroHour ? atLine(heroHour as Hour, tz, clock) : sourceLine({ source, sensor, model: model?.model }, clock);
   const heroSource: HeroSource = forecastAt ? "forecast"
     : source === "model" ? "model"
-    : source === "station" ? "station"
+    : source === "station" ? (live ? "station" : "stale")
     : sensor?.km != null && sensor.km > NEARBY_WARN_KM ? "far" : "nearby";
 
   const pickRange = useCallback((r: Range) => {
@@ -141,9 +147,19 @@ export const SpotDetail = memo(function SpotDetail({ spot, onBack }: { spot: Spo
     }));
   }, []);
 
+  // A day in the week strip, where nothing sets the clock: its session as if picked from the list, else its strongest hour.
+  const pickDay = useCallback((c: WeekCell) => {
+    if (c.session) pickSession(c.session);
+    else if (c.peak) setScrub(c.peak);
+  }, [pickSession]);
+  const hoursAll = fc.data?.hours;
+  const everySession = useMemo(() => (hoursAll ? allSessions(hoursAll, spot) : []), [hoursAll, spot]);
+  // SeaSensei hours carry a range, and its sessions a chance; a raw model has neither (it keeps the models' agreement).
+  const ranged = !!hoursAll?.some((h) => h.lo != null);
+
   const { refetch } = fc;
   const retry = useCallback(() => { refetch(); }, [refetch]);
-  const chartConfidence = models.data ? confidence(models.data, clock, clock + 48 * HOUR) : null;
+  const chartConfidence = models.data && !ranged ? confidence(models.data, clock, clock + 48 * HOUR) : null;
   // Full screen: the forecast leaves room for the bar chart under the line chart; the models (no bars) take the height,
   // less on a phone, whose full-screen header wraps to more lines.
   const maxH = expanded ? Math.max(250, Math.round(window.innerHeight * (view === "models" ? (desktop ? 0.66 : 0.55) : 0.44))) : 560;
@@ -167,14 +183,22 @@ export const SpotDetail = memo(function SpotDetail({ spot, onBack }: { spot: Spo
       </AnimatePresence>
 
       <Rise i={0}>
-        <SpotHero spot={spot} verdict={verdict} shown={heroHour} when={when} source={heroSource} scrubbing={scrub != null}
+        <SpotHero spot={spot} pill={pill} seaward={seaward} shown={heroHour} when={when} source={heroSource} scrubbing={scrub != null}
           now={now} model={model} loading={fc.isPending} forecastError={fc.isError ? (fc.error as Error) : null} onRetry={retry} retrying={fc.isFetching}
           stationError={ownStation(spot) && ob.isError ? (ob.error as Error) : null} />
       </Rise>
 
+      {ranged && <Rise i={1}><HowSure /></Rise>}
+
+      {!fc.isError && fc.data && (
+        <Rise i={1}>
+          <WeekStrip hours={fc.data.hours} spot={spot} all={everySession} tz={tz} at={scrubT} seaward={seaward} onPick={pickDay} />
+        </Rise>
+      )}
+
       {!fc.isError && (
         <Rise i={1}>
-          <Sessions sessions={sessions} tz={tz} models={models.data} loading={fc.isPending}
+          <Sessions sessions={sessions} tz={tz} models={models.data} loading={fc.isPending} seaward={seaward}
             best={verdict?.state === "none" ? verdict.best : null} scrubT={scrub?.t} atT={at} onPick={pickSession} />
         </Rise>
       )}

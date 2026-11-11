@@ -48,7 +48,9 @@ test("the board ranks spots by their verdict, under one answer for the day", asy
   // every spot is on now; equal sessions keep your order, and the answer names the first
   for (const n of ["Fort De Soto", "Skyway", "Picnic Island"]) {
     await expect(cardOf(page, n).locator("[data-verdict]")).toHaveText("On now");
-    await expect(cardOf(page, n)).toContainText(/till \d{1,2} PM · \d+(–\d+)? kn SW/);
+    await expect(cardOf(page, n)).toContainText(/till \d{1,2} PM · \d+–\d+ kn SW/); // how long, and the range the wind is likely to fall in
+    // how likely the session is, in a word, on every card (not only the top one)
+    await expect(cardOf(page, n).getByTestId("chance").locator("visible=true")).toHaveText(/^(Likely|Possible|Unlikely)$/);
     // today's daylight ribbon, with the rideable hours in words for screen readers
     await expect(cardOf(page, n).getByRole("img", { name: /^Today, sunrise to sunset: rideable \d{1,2}( AM)?–\d{1,2} PM/ })).toBeVisible();
   }
@@ -194,7 +196,7 @@ test("the discussion's archive arrows keep focus when they reach the end of the 
   await expect(dialog.getByRole("heading", { name: /Yesterday's pattern/ })).toBeVisible();
 });
 
-test("the board's top card carries the day's answer, with how sure the models are", async ({ page }) => {
+test("the board's top card carries the day's answer, and says how likely it is in a word, not in model jargon", async ({ page }) => {
   await page.clock.install({ time: tampaToday(13) });
   await open(page);
   const answer = page.getByTestId("today-answer");
@@ -203,8 +205,10 @@ test("the board's top card carries the day's answer, with how sure the models ar
   await expect(first.getByTestId("today-answer")).toHaveCount(1);
   await expect(first.getByRole("button")).toHaveAccessibleName(/^Best today Fort De Soto On now/);
   await expect(answer).toBeVisible();
-  // how sure: the models' agreement for that session, in words
-  await expect(first.getByRole("img", { name: /^(Models agree|Some disagreement|Models disagree) · \d+ kn spread$/ })).toBeVisible();
+  // how sure: the session's chance in a word; no dots, no "kn spread"
+  await expect(first.getByTestId("chance").locator("visible=true")).toHaveText(/^(Likely|Possible|Unlikely)$/);
+  await expect(first.getByRole("img", { name: /kn spread/ })).toHaveCount(0);
+  await expect(list(page).getByText(/spread|Models (agree|disagree)/)).toHaveCount(0);
 });
 
 test("each card says where its reading comes from, and how far away a nearby sensor is", async ({ page }) => {
@@ -267,7 +271,7 @@ test("wind over the range right now reads \"Too strong now\" on the card and the
   const pic = cardOf(page, "Picnic Island");
   await expect(pic.locator("[data-verdict]")).toHaveText("Too strong now");
   await expect(pic.locator("[data-verdict]")).toHaveAttribute("data-verdict", "strong");
-  await expect(pic).toContainText(/forecast till \d{1,2} PM/); // the forecast's session, said as such
+  await expect(pic).toContainText("Forecast says on, sensor reads 31 kn"); // both, each named for what it is
   await expect(page.locator('[data-spot-marker="pic"]')).toHaveAttribute("aria-label", "Picnic Island, 31 knots, Too strong now");
   await expect(cardOf(page, "Skyway").locator("[data-verdict]")).toHaveText("On now"); // the others are on
   await pic.getByRole("button").click();
@@ -290,4 +294,137 @@ test("a card lights its marker when the keyboard reaches it, not when focus come
   await page.keyboard.press("Shift+Tab"); // the keyboard brings it back
   await expect(cardOf(page, "Skyway").getByRole("button")).toBeFocused();
   await expect(page.locator('[data-spot-marker="seed-skyway"]')).toHaveAttribute("data-highlighted", "true");
+});
+
+/* ---------- The verdict agrees with the spot's own sensor ---------- */
+
+/** Picnic Island's own station (Old Port Tampa) reads this, `ageMin` minutes before `now`. */
+const stationReads = (page: Page, id: string, now: number, r: { kn: number; dir?: number; ageMin?: number }) =>
+  page.route("https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?**", (route) => {
+    const q = new URL(route.request().url()).searchParams;
+    if (q.get("station") !== id || q.get("range")) return route.fallback();
+    return route.fulfill({ contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify({
+      metadata: { id, name: id === "8726607" ? "Old Port Tampa" : "Middle Tampa Bay", lat: id === "8726607" ? "27.8578" : "27.66175", lon: id === "8726607" ? "-82.5528" : "-82.599525" },
+      data: [{ t: new Date(now - (r.ageMin ?? 6) * 60e3).toISOString().slice(0, 16).replace("T", " "), s: r.kn.toFixed(2), d: (r.dir ?? 220).toFixed(1), dr: "SW", g: (r.kn + 5).toFixed(2), f: "0,0" }],
+    }) });
+  });
+
+test("a spot's own sensor reading rideable wind is \"On now\", whatever the forecast said, with the sensor as the evidence", async ({ page }) => {
+  // 3:30 PM: the forecast (about 17 kn) is under this rider's 22 kn minimum, so on its own it says no session now;
+  // Picnic Island's own station reads 25 kn from the SW.
+  const now = tampaToday(15) + 30 * 60e3;
+  await page.clock.setFixedTime(now);
+  await seed(page, [SEEDED[0], SEEDED[1], { ...SEEDED[2], min: 22, max: 35 }]);
+  await mockApis(page);
+  await stationReads(page, "8726607", now, { kn: 25 });
+  await page.goto("/");
+  const pic = cardOf(page, "Picnic Island");
+  await expect(pic.locator("[data-verdict]")).toHaveText("On now");
+  await expect(pic.locator("[data-verdict]")).toHaveAttribute("data-verdict", "on");
+  // the evidence, and how long the forecast (now bent toward the reading) holds it
+  await expect(pic).toContainText(/25 kn at the sensor · (till \d{1,2} PM|may not last the hour)/);
+  await expect(pic).not.toContainText(/Too light|No session/);
+  await expect(page.locator('[data-spot-marker="pic"]')).toHaveAttribute("aria-label", "Picnic Island, 25 knots, On now"); // the map agrees
+  await pic.getByRole("button").click();
+  await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
+  await expect(list(page)).toHaveCount(0);
+  await expect(page.locator("aside [data-verdict]").first()).toHaveText("On now");
+  await expect(page.locator("aside").getByText(/^25 kn at the sensor · /).last()).toBeVisible(); // (the hero; the board behind it says the same)
+});
+
+test("when the forecast says on and the spot's own sensor reads too light, the card says both and is not green", async ({ page }) => {
+  const now = tampaToday(13);
+  await page.clock.setFixedTime(now);
+  await seed(page, SEEDED);
+  await mockApis(page);
+  await stationReads(page, "8726607", now, { kn: 9 });
+  await page.goto("/");
+  const pic = cardOf(page, "Picnic Island");
+  await expect(pic.locator("[data-verdict]")).toHaveText("Too light now");
+  await expect(pic.locator("[data-verdict]")).toHaveAttribute("data-verdict", "light");
+  await expect(pic).toContainText("Forecast says on, sensor reads 9 kn");
+  await expect(cardOf(page, "Skyway").locator("[data-verdict]")).toHaveText("On now"); // the others still go by their forecast
+  await expect.poll(() => names(page)).toEqual(["Fort De Soto", "Skyway", "Picnic Island"]); // and rank above it
+  await pic.getByRole("button").click();
+  await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
+  await expect(page.locator("aside [data-verdict]").first()).toHaveText("Too light now");
+  await expect(page.locator("aside").getByText("Forecast says on, sensor reads 9 kn")).toBeVisible();
+});
+
+test("a nearby sensor is shown beside the verdict and never changes it", async ({ page }) => {
+  // Fort De Soto has no station of its own: Middle Tampa Bay, 14 km away, reads 9 kn while the forecast is on.
+  const now = tampaToday(13);
+  await page.clock.setFixedTime(now);
+  await seed(page, SEEDED);
+  await mockApis(page);
+  await stationReads(page, "8726412", now, { kn: 9 });
+  await page.goto("/");
+  const fds = cardOf(page, "Fort De Soto");
+  await expect(fds.getByTestId("spot-reading")).toHaveText(/^Nearby · 14 km\s*·\s*9 kn/);
+  await expect(fds.locator("[data-verdict]")).toHaveText("On now");
+  await expect(fds).toContainText(/till \d{1,2} PM · \d+–\d+ kn SW/); // the forecast's word, not the sensor's
+  await expect(fds).not.toContainText("at the sensor");
+  await fds.getByRole("button").click();
+  await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
+  // the hero shows the reading for what it is: a nearby sensor's
+  await expect(page.locator("aside").getByText(/^Nearby sensor · Middle Tampa Bay · 14 km/)).toBeVisible();
+  await expect(page.locator("aside").getByText("· 6 kn under your 15, at the nearby sensor")).toBeVisible();
+});
+
+test("a reading older than half an hour is never called live: it shows its age and leaves the verdict to the forecast", async ({ page }) => {
+  const now = tampaToday(13);
+  await page.clock.setFixedTime(now);
+  await seed(page, SEEDED);
+  await mockApis(page);
+  await stationReads(page, "8726607", now, { kn: 9, ageMin: 45 });
+  await page.goto("/");
+  const pic = cardOf(page, "Picnic Island");
+  await expect(pic.getByTestId("spot-reading")).toHaveText(/^45 min ago\s*·\s*9 kn/);
+  await expect(pic.locator("[data-verdict]")).toHaveText("On now"); // 45 minutes ago is not now
+  await expect(pic).toContainText(/till \d{1,2} PM · \d+–\d+ kn SW/);
+  await pic.getByRole("button").click();
+  await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
+  await expect(page.locator("aside").getByText(/^Last reading · Old Port Tampa · 0\.\d km · 45 min ago$/)).toBeVisible();
+  await expect(page.locator("aside").getByText(/^Live ·/)).toHaveCount(0);
+});
+
+/* ---------- The week at a glance ---------- */
+
+test("the week at a glance: the best spot each day with its window, range and chance; a day sets the one clock", async ({ page }) => {
+  await page.clock.install({ time: tampaToday(9) });
+  await open(page);
+  const week = page.getByTestId("week-board");
+  await week.scrollIntoViewIfNeeded();
+  const rows = week.getByRole("listitem");
+  await expect(rows).toHaveCount(7);
+  await expect(rows.first()).toContainText(/^Today/);
+  // the mock wind is on every day: each row names a spot, the session's hours, the likely range and a chance word
+  for (const i of [0, 1, 6]) {
+    await expect(rows.nth(i)).toContainText(/(Fort De Soto|Skyway|Picnic Island)\s*\d{1,2}( AM)?–\d{1,2} PM/);
+    await expect(rows.nth(i)).toContainText(/\d+–\d+ kn SW\s*(Likely|Possible|Unlikely)$/);
+    await expect(rows.nth(i).locator("[data-state]")).toHaveAttribute("data-state", "go");
+  }
+  // The shell owns the chosen hour and listens through lib/time's onAtRequest. Until App.tsx does, stand in for it
+  // here, so the board's half is still checked: a day asks the one clock for that session's start.
+  const wired = !!(await week.getAttribute("data-clock"));
+  if (!wired) await page.evaluate(async () => {
+    const time = await import(/* @vite-ignore */ `${location.origin}/src/lib/time.tsx`);
+    time.onAtRequest((t: number | null) => { (window as unknown as { asked: number | null }).asked = t; });
+  });
+  await expect(week).toHaveAttribute("data-clock", "true");
+  const day = rows.nth(2).getByRole("button");
+  await expect(day).toHaveAccessibleName(/^[A-Z][a-z]{2}: .+, \d+–\d+ kn SW, (likely|possible|unlikely)\. Show that day$/);
+  await day.click();
+  const label = (await rows.nth(2).textContent())!.slice(0, 3);
+  if (!wired) {
+    const asked = await page.evaluate(() => (window as unknown as { asked: number }).asked);
+    const said = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short", hour: "numeric", minute: "2-digit" }).format(asked);
+    expect(said).toMatch(new RegExp(`^${label},? \\d{1,2}:00\\sAM$`)); // that day, a whole hour in the morning: the session's start
+    return;
+  }
+  await expect(day).toHaveAttribute("aria-pressed", "true");
+  // every card's reading, and the map, are now on that day's session start
+  await expect(cardOf(page, "Skyway").getByTestId("spot-reading")).toHaveText(new RegExp(`^${label} \\d{1,2} AM`));
+  await page.getByRole("button", { name: "Back to now" }).click();
+  await expect(day).toHaveAttribute("aria-pressed", "false");
 });

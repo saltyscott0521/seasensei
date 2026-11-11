@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rankSpots, sessions, sunTimes, verdict } from "./session";
+import { nowVerdict, rankSpots, sessions, sunTimes, verdict } from "./session";
 import type { Hour } from "./wind";
 
 // Only the session engine's tricky parts: the sun, night hours, minimum length, direction across north, the verdict.
@@ -49,5 +49,31 @@ describe("session engine", () => {
     // a quiet week: the spot closest to rideable leads, never the one that is only ever too strong
     const quiet = (speed: number) => verdict(spot, hours.map((h) => ({ ...h, speed })), [], Date.parse("2026-11-06T15:30:00Z"), tz);
     expect(rankSpots([{ k: "storm", verdict: quiet(40) }, { k: "light", verdict: quiet(13) }]).map((r) => r.k)).toEqual(["light", "storm"]);
+  });
+
+  it("only a fresh reading from the spot's own station overrules the forecast: on, too light, or left alone when stale", () => {
+    const tz = "America/New_York", now = Date.parse("2026-11-06T18:30:00Z"); // 1:30 PM in Tampa
+    // a light day (10 kn): no session; then a windy one (20 kn): on now
+    const light = day("2026-11-06T05:00:00Z", () => ({ speed: 10, gust: 12 }));
+    const none = verdict(spot, light, sessions(light, spot, { from: now }), now, tz);
+    const read = (speed: number, ageMin = 5, dir = 225) => ({ speed, dir, t: now - ageMin * 60e3 });
+    // the forecast as shown is bent toward the reading for this hour and the next, then drops back
+    const bent = light.map((h) => (h.t <= now && now - h.t < 2 * H ? { ...h, speed: 18 } : h.t > now && h.t - now < H ? { ...h, speed: 16 } : h));
+    const on = nowVerdict(none, { spot, hours: bent, now, tz, reading: read(18), forecastOn: false });
+    expect([on.state, on.label, on.detail, on.verdict.state]).toEqual(["on", "On now", "18 kn at the sensor · till 3 PM", "on"]);
+    expect(nowVerdict(none, { spot, hours: light, now, tz, reading: read(18) }).detail).toBe("18 kn at the sensor · may not last the hour");
+    expect(nowVerdict(none, { spot, hours: light, now, tz, reading: read(18, 45) }).state).toBe("none"); // 45 min old: not now
+    expect(nowVerdict(none, { spot, hours: light, now, tz, reading: read(18, 5, 45) }).state).toBe("on"); // any direction allowed here
+    expect(nowVerdict(none, { spot: { ...spot, dirC: 225, dirW: 90 }, hours: light, now, tz, reading: read(18, 5, 45) }).state).toBe("none"); // NE at a SW spot
+
+    const windy = day("2026-11-06T05:00:00Z", () => ({}));
+    const go = verdict(spot, windy, sessions(windy, spot, { from: now }), now, tz);
+    expect(go.state).toBe("on");
+    const lightNow = nowVerdict(go, { spot, hours: windy, now, tz, reading: read(9), forecastOn: true });
+    expect([lightNow.state, lightNow.label, lightNow.detail]).toEqual(["light", "Too light now", "Forecast says on, sensor reads 9 kn"]);
+    expect(nowVerdict(go, { spot, hours: windy, now, tz, reading: read(34), forecastOn: true }).label).toBe("Too strong now");
+    // at night a rideable reading doesn't make a session
+    const night = Date.parse("2026-11-07T03:00:00Z");
+    expect(nowVerdict(none, { spot, hours: light, now: night, tz, reading: { speed: 18, dir: 225, t: night - 60e3 } }).state).toBe("none");
   });
 });

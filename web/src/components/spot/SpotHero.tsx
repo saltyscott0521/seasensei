@@ -2,18 +2,23 @@ import NumberFlow from "@number-flow/react";
 import clsx from "clsx";
 import { ArrowUp, ChartSpline, Clock3, MapPin, Navigation2Off, RotateCw, TriangleAlert } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { darkWord, isDaylight, isDaylightHour, nowVerdict, type Verdict } from "../../lib/session";
+import { fmtRange } from "../../lib/sensei";
+import { chanceOf, darkWord, isDaylight, isDaylightHour, type NowVerdict } from "../../lib/session";
 import type { useSpotNow } from "../../lib/useSpotNow";
 import { compass, MODEL_INFO, rideState, windColor, windGradient, type Ride, type Spot } from "../../lib/wind";
 import { Dial, Skeleton, WindArrow } from "../bits";
 import { Button, Chip, VerdictPill } from "../ui";
 import { Dotted } from "./Dotted";
 import { errorText } from "./format";
+import { OFFSHORE_CAUTION, shoreWord } from "./shore";
 
 type SpotNow = ReturnType<typeof useSpotNow>;
 
-/** Where the big number comes from: the spot's own station, a nearby sensor (far = beyond 8 km), the model now, or a forecast hour. */
-export type HeroSource = "station" | "nearby" | "far" | "model" | "forecast";
+/**
+ * Where the big number comes from: the spot's own station (stale = its last reading, over 30 min old), a nearby sensor
+ * (far = beyond 8 km), the model now, or a forecast hour.
+ */
+export type HeroSource = "station" | "stale" | "nearby" | "far" | "model" | "forecast";
 
 const DIAL = 104;
 const SCALE = 45; // the wind scale's top (windGradient runs 0–45 kn)
@@ -21,14 +26,19 @@ const SCALE = 45; // the wind scale's top (windGradient runs 0–45 kn)
 /**
  * The answer first: the verdict, then the wind for the shown hour (now, the timeline's hour, or the chart's cursor)
  * with where it comes from, how it sits in the spot's range, and the dial with the rideable arc. The verdict is about
- * now: wind over the range right now reads "Too strong now" (as on the map), and while the hero shows another hour the
- * pill goes neutral, so only the range line below speaks for that hour.
+ * now, checked against the spot's own sensor ("On now · 18 kn at the sensor · till 4 PM"; "Too light now · Forecast
+ * says on, sensor reads 9 kn"), with how likely its session is in a word. While the hero shows another hour the pill
+ * goes neutral, so only the range line below speaks for that hour. A forecast hour gives the range it is likely to
+ * fall in; where the coast can tell, the wind is named onshore, side-shore or offshore (with a caution).
  */
-export function SpotHero({ spot, verdict, shown, when, source, scrubbing, now, model, loading, forecastError, onRetry, retrying, stationError }: {
+export function SpotHero({ spot, pill, shown, when, source, scrubbing, now, model, loading, forecastError, onRetry, retrying, stationError, seaward }: {
   spot: Spot;
-  verdict: Verdict | null;
+  /** The verdict about now (useSpotNow's `pill`). */
+  pill: NowVerdict | null;
   /** The hour to show: the chart's cursor, else the timeline's hour, else the best "now" reading. */
-  shown: { speed: number; gust: number; dir: number; t?: number } | null;
+  shown: { speed: number; gust: number; dir: number; t?: number; lo?: number; hi?: number } | null;
+  /** The bearing from the spot out over open water, where the coast can tell (see shore.ts). */
+  seaward?: number | null;
   /** The source line: "Live · Old Port Tampa · 0.5 km · 4 min ago", "HRRR forecast", "Sat 3 PM · HRRR forecast". */
   when: string;
   source: HeroSource;
@@ -43,14 +53,17 @@ export function SpotHero({ spot, verdict, shown, when, source, scrubbing, now, m
   retrying?: boolean;
   stationError: Error | null;
 }) {
-  const live = source === "station" || source === "nearby" || source === "far";
+  const live = source === "station" || source === "stale" || source === "nearby" || source === "far";
+  // A forecast hour comes with the range it is likely to fall in; a sensor reading is what it is.
+  const range = !live && shown ? fmtRange(shown) : null;
+  const shore = shown && seaward != null ? shoreWord(shown.dir, seaward) : null;
+  const chance = pill && pill.state !== "strong" ? chanceOf(pill.verdict.session) : null;
   const instant = scrubbing || source === "forecast";
   // Dark at the shown time? A forecast hour counts as daylight only when all of it is (the sessions' rule).
   const clock = Date.now();
   const t = source === "forecast" && shown?.t != null ? shown.t : clock;
   const night = shown ? (source === "forecast" && shown.t != null ? !isDaylightHour(spot.lat, spot.lon, t) : !isDaylight(spot.lat, spot.lon, t)) : false;
   const dark = night ? darkWord(spot.lat, spot.lon, t) : null;
-  const pill = verdict ? nowVerdict(verdict, now?.speed, spot) : null;
   // Scrubbing changes the numbers silently for screen readers: say where it settled (debounced, so playback stays quiet).
   const settled = useDebounced(source === "forecast" && shown
     ? `${when.split(" · ")[0]}: ${Math.round(shown.speed)} knots, gusting ${Math.round(shown.gust)}, from ${compass(shown.dir)}, ${FIT[rideState(shown.speed, spot, shown.dir)].toLowerCase()}${dark ? `, ${dark}` : ""}.`
@@ -68,6 +81,7 @@ export function SpotHero({ spot, verdict, shown, when, source, scrubbing, now, m
           <>
             <VerdictPill state={pill.state} label={pill.label} muted={source === "forecast"} />
             {pill.detail && <span className="num text-label text-fg-2">{pill.detail}</span>}
+            {chance && <span data-testid="chance" className="text-label font-medium text-fg">{chance}</span>}
           </>
         ) : forecastError ? (
           <div className="flex w-full flex-wrap items-center justify-between gap-3">
@@ -93,11 +107,21 @@ export function SpotHero({ spot, verdict, shown, when, source, scrubbing, now, m
                 <NumberFlow value={Math.round(shown.speed)} animated={!instant} willChange className="-my-[0.25em] text-display" />
                 <span className="text-title font-medium text-fg-3">kn</span>
               </div>
-              <p className="num mt-2 text-label text-fg-2">gusting {Math.round(shown.gust)} · from {compass(shown.dir)}</p>
+              <p className="num mt-2 text-label text-fg-2">
+                {range && <span data-testid="hero-range">likely {range} kn · </span>}
+                gusting {Math.round(shown.gust)} · from {compass(shown.dir)}{shore && <span data-testid="shore"> · {shore}</span>}
+              </p>
             </div>
             <Dial dir={shown.dir} speed={shown.speed} size={DIAL} arc={spot} />
           </div>
-          <RangeFit spot={spot} speed={shown.speed} dir={shown.dir} dark={dark} instant={instant} />
+          <RangeFit spot={spot} speed={shown.speed} dir={shown.dir} dark={dark} instant={instant}
+            where={source === "nearby" || source === "far" ? "at the nearby sensor" : source === "stale" ? "at the last reading" : null} />
+          {shore === "offshore" && (
+            <p data-testid="offshore" className="relative mt-3 flex items-start gap-1.5 text-caption font-medium text-wrongdir">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              <span>{OFFSHORE_CAUTION}</span>
+            </p>
+          )}
         </>
       ) : forecastError ? null : (
         <HeroSkeleton busy={loading} />
@@ -138,6 +162,7 @@ function SourceLine({ source, text }: { source: HeroSource; text: string }) {
         <span className="relative size-2 rounded-full bg-accent" />
       </span>
     ),
+    stale: <Clock3 aria-hidden className="mt-0.5 size-3.5 shrink-0" />,
     nearby: <MapPin aria-hidden className="mt-0.5 size-3.5 shrink-0" />,
     far: <MapPin aria-hidden className="mt-0.5 size-3.5 shrink-0 text-soon" strokeWidth={2.5} />,
     model: <ChartSpline aria-hidden className="mt-0.5 size-3.5 shrink-0" />,
@@ -161,7 +186,11 @@ const FIT_TONE: Record<Ride, string> = { good: "text-fg", below: "text-fg-2", ab
  * it is or that it is dark, and a read-only gauge on the wind scale: the spot's range lit and labelled, and a caret
  * for the wind. Nothing here looks like a control.
  */
-function RangeFit({ spot, speed, dir, dark, instant }: { spot: Spot; speed: number; dir: number; dark: string | null; instant: boolean }) {
+function RangeFit({ spot, speed, dir, dark, instant, where }: {
+  spot: Spot; speed: number; dir: number; dark: string | null; instant: boolean;
+  /** The reading isn't the spot's own, or isn't fresh: say whose word this is ("at the nearby sensor"). */
+  where?: string | null;
+}) {
   const ride = rideState(speed, spot, dir);
   // Off by less than half a knot rounds to 0: say "just under" rather than "0 kn under".
   const under = Math.round(spot.min - speed), over = Math.round(speed - spot.max);
@@ -169,6 +198,7 @@ function RangeFit({ spot, speed, dir, dark, instant }: { spot: Spot; speed: numb
     : ride === "above" ? `${over ? `${over} kn` : "just"} over your ${spot.max}`
     : ride === "offdir" ? `from ${compass(dir)}, outside your directions`
     : dark ?? "";
+  const says = [detail, where].filter(Boolean).join(", ");
   const pct = (v: number) => Math.min(100, Math.max(0, (v / SCALE) * 100));
   const move = clsx("absolute inset-0", !instant && "transition-transform duration-(--dur-slow) ease-ui motion-reduce:transition-none");
   return (
@@ -177,7 +207,7 @@ function RangeFit({ spot, speed, dir, dark, instant }: { spot: Spot; speed: numb
         {ride === "offdir" && <Navigation2Off aria-hidden className="size-3.5 shrink-0 text-wrongdir" strokeWidth={2.25} />}
         {ride === "above" && <ArrowUp aria-hidden className="size-3.5 shrink-0 text-strong" strokeWidth={2.5} />}
         <span className={clsx("font-semibold", FIT_TONE[ride])}>{FIT[ride]}</span>
-        {detail && <span className="num text-fg-2">· {detail}</span>}
+        {says && <span className="num text-fg-2">· {says}</span>}
       </p>
       <div aria-hidden className="relative mt-2 h-[26px]">
         {/* the scale, faint, with the spot's range lit */}

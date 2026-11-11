@@ -80,19 +80,19 @@ export const spotModelsQuery = (spot: Pick<Spot, "lat" | "lon"> | undefined) =>
   });
 
 // One built forecast per (payload, model, calibration, hour), shared by every card, marker and chart of a spot.
-const built = new WeakMap<ModelSeries, { model: Model; cal: Calibration; hour: number; lat: number; lon: number; forecast: Forecast }[]>();
+const built = new WeakMap<ModelSeries, { model: Model; cal: Calibration; hour: number; station: string | undefined; forecast: Forecast }[]>();
 
 /** A spot's forecast for a primary model from its models: SeaSensei's blend, or a raw model's chain. */
-export function forecastFrom(series: ModelSeries, model: Model, cal: Calibration, spot: Pick<Spot, "lat" | "lon">, hour: number): Forecast {
+export function forecastFrom(series: ModelSeries, model: Model, cal: Calibration, spot: Pick<Spot, "station">, hour: number): Forecast {
   let list = built.get(series);
   if (!list) built.set(series, (list = []));
-  const hit = list.find((e) => e.model === model && (model !== "sensei" || (e.cal === cal && e.hour === hour && e.lat === spot.lat && e.lon === spot.lon)));
+  const hit = list.find((e) => e.model === model && (model !== "sensei" || (e.cal === cal && e.hour === hour && e.station === spot.station)));
   if (hit) return hit.forecast;
   const forecast = model === "sensei"
     ? { timeZone: series.timeZone, hours: buildSensei(series, cal, spot, hour) }
     : chainForecast(series, model);
   if (list.length > 12) list.length = 0;
-  list.push({ model, cal, hour, lat: spot.lat, lon: spot.lon, forecast });
+  list.push({ model, cal, hour, station: spot.station, forecast });
   return forecast;
 }
 
@@ -114,7 +114,7 @@ export function sensorFor(spot: Spot | undefined, ob: Observation | undefined, l
   return null;
 }
 
-/** SeaSensei hours bent toward a qualifying sensor reading (see sensei.ts); any other forecast comes back as it is. */
+/** SeaSensei hours bent toward a fresh reading from the spot's own station (see sensei.ts); any other forecast comes back as it is. */
 function withNowcast(fc: Forecast, sensor: Sensor | null, cal: Calibration, hour: number): Forecast {
   if (!sensor || fc.hours[0]?.model !== "sensei" || !nowcastQualifies(sensor)) return fc;
   const hours = applyNowcast(fc.hours, sensor, cal.nowcast, Math.max(sensor.t, hour));
@@ -159,9 +159,9 @@ function useSpotForecast(spot: Spot | undefined, model: Model, enabled = true): 
   const { data, error, isFetching, refetch } = useQuery({ ...spotModelsQuery(spot), enabled: !!spot && enabled });
   const sensor = useSensor(enabled ? spot : undefined);
   const live = nowcastQualifies(sensor, minute) ? sensor : null;
-  const [kind, t, speed, km] = [live?.kind, live?.t, live?.speed, live?.km];
+  const [t, speed] = [live?.t, live?.speed];
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the sensor by its values, not its identity
-  return useMemo(() => toResult({ data, error, isFetching, refetch }, spot, model, cal, live, hour), [data, error, isFetching, refetch, spot, model, cal, hour, kind, t, speed, km]);
+  return useMemo(() => toResult({ data, error, isFetching, refetch }, spot, model, cal, live, hour), [data, error, isFetching, refetch, spot, model, cal, hour, t, speed]);
 }
 
 /** The forecast for a spot with the rider's primary model: SeaSensei unless they picked a raw one. */

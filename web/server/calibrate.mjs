@@ -1,8 +1,10 @@
 // Learning (forecast contract, step 7): pair what the stations measured (observe.mjs) with what each archived
 // model run said for that hour (archive.mjs), and keep, per station × model, exponentially decaying statistics
 // (≈ 30-day memory): the quantile map's knots, the average miss of the calibrated value per lead bucket and a
-// gust factor; plus pooled values, the blend's residual range, and a rolling 30-day score of the blend against
-// each raw model. /api/calibration serves the result; the browser builds the SeaSensei forecast from it.
+// gust factor (measured gust ÷ speed at 10 kn or more); plus pooled misses and gust factors (they set the blend's
+// weights away from a sensor; pooled maps are never learned: a map borrowed from other stations backtested worse
+// than the raw model), the blend's residual range (from daylight hours with 10 kn or more forecast, which is when
+// a rider reads it), and a rolling 30-day score of the blend against each raw model. /api/calibration serves the result; the browser builds the SeaSensei forecast from it.
 //
 // How it stays correct and cheap:
 //  - It only reads R2 (observations, run files, its own state). It never calls Open-Meteo.
@@ -21,7 +23,7 @@ import fs from "node:fs";
 import * as r2 from "./r2.mjs";
 import { ARCHIVE_MODELS, cellOf, dirFor, runOfKey } from "./archive.mjs";
 import * as observe from "./observe.mjs";
-import { KNOTS, LEAD_BUCKETS, MODELS, applyQm, blendHour, bucketOf, clampCorrection, toKnots } from "./blend.mjs";
+import { KNOTS, LEAD_BUCKETS, MODELS, applyQm, blendHour, bucketOf, clampCorrection, isDaylight, toKnots } from "./blend.mjs";
 
 const HOUR = 3600, DAY = 86400;
 const STATE_KEY = "calibration/v1/state.json";
@@ -35,6 +37,7 @@ const MAX_READS = Number(process.env.CALIBRATE_MAX_READS ?? 150);    // run file
 const MAX_HOURS = Number(process.env.CALIBRATE_MAX_HOURS ?? 240);    // observed hours processed per cycle
 const CHECK_MS = Number(process.env.LEARN_CHECK_MS ?? 3600e3);
 const BOOT_MS = Number(process.env.LEARN_BOOT_DELAY_MS ?? 90_000);
+const WINDY = 10;                         // kn: gust factors and the residual range come from hours at least this windy
 const SPEED_BINS = 50;                    // 1 kn bins, 0–50 kn
 const RES_BINS = 80, RES_MIN = -20, RES_STEP = 0.5; // residual (observed − blend) bins
 
@@ -93,7 +96,7 @@ export function parseSeed(json) {
 }
 
 function loadSeed() {
-  const file = process.env.CALIBRATION_SEED_FILE ?? new URL("./calibration-seed.json", import.meta.url);
+  const file = process.env.CALIBRATION_SEED_FILE || new URL("./calibration-seed.json", import.meta.url);
   try { return { seed: parseSeed(JSON.parse(fs.readFileSync(file, "utf8"))), error: null }; }
   catch (e) {
     console.error(`[calibration] seed file not usable (${e.message}); serving the built-in identity seed`);
@@ -184,23 +187,24 @@ export const share = (n) => (n >= MIN_N ? n / (n + HALF_N) : 0);
 /**
  * What's in force for one station × model or pooled model: the prior (seed / pooled) mixed with the learned values
  * by `share(n)`, for the knots, the misses and the gust factor alike; the mixed map is clamped and never decreasing.
+ * Pooled models (`withMap` false) keep the seed's map, whatever was observed.
  */
-function inForce(acc, prior) {
-  const w = acc ? share(acc.n) : 0, qm = w ? learnedQm(acc) : null;
-  if (!qm) return prior ? { ...prior, learned: false } : null;
+function inForce(acc, prior, withMap = true) {
+  const w = acc ? share(acc.n) : 0, qm = w && withMap ? learnedQm(acc) : null;
+  if (!w || (withMap && !qm)) return prior ? { ...prior, learned: false } : null;
   const mix = (old, now) => old + w * (now - old);
   let floor = 0;
   return {
     n: Math.round(acc.n), learned: true,
-    qm: KNOTS.map((r, i) => { floor = Math.max(floor, clampCorrection(r, mix(prior.qm[i][1], qm[i][1]))); return [r, +floor.toFixed(2)]; }),
+    qm: qm ? KNOTS.map((r, i) => { floor = Math.max(floor, clampCorrection(r, mix(prior.qm[i][1], qm[i][1]))); return [r, +floor.toFixed(2)]; }) : prior.qm,
     mae: acc.mae.map(([e, hours], b) => (hours >= 24 ? +Math.max(0.3, mix(prior.mae[b], e / hours)).toFixed(2) : prior.mae[b])),
-    gf: acc.gf[1] >= 100 ? +Math.min(2, Math.max(1, mix(prior.gf, acc.gf[0] / acc.gf[1]))).toFixed(2) : prior.gf,
+    gf: acc.gf[1] >= 30 * WINDY ? +Math.min(2, Math.max(1, mix(prior.gf, acc.gf[0] / acc.gf[1]))).toFixed(2) : prior.gf,
   };
 }
 
 /** Everything in force for a state: pooled per model, and per station the models that have their own values. */
 function table(st) {
-  const pooled = Object.fromEntries(MODELS.map((m) => [m, inForce(st.pooled[m], seed.pooled.models[m])]));
+  const pooled = Object.fromEntries(MODELS.map((m) => [m, inForce(st.pooled[m], seed.pooled.models[m], false)]));
   const stations = new Map(seed.stations.map((s) => [s.id, { ...s, models: Object.fromEntries(Object.entries(s.models).map(([m, x]) => [m, { ...x, learned: false }])) }]));
   for (const [id, s] of Object.entries(st.stations)) {
     const prior = stations.get(id);
@@ -253,37 +257,44 @@ export function processHour(st, t, obs, forecasts) {
       if (inPool) targets.push({ acc: (st.pooled[m] ??= newAcc()), w: 1 / poolSize[m], qm: tab.pooled[m].qm });
       for (const { acc, w, qm } of targets) {
         acc.n += w;
-        acc.o[bin(o.s)] += w;
-        for (const r of runs) acc.f[bin(r.f)] += w / runs.length;
+        if (acc !== st.pooled[m]) { acc.o[bin(o.s)] += w; for (const r of runs) acc.f[bin(r.f)] += w / runs.length; } // no pooled map is learned
         for (let b = 0; b < LEAD_BUCKETS.length; b++) {
           const inB = runs.filter((r) => bucketOf(r.lead) === b);
           if (!inB.length) continue;
           acc.mae[b][0] += (w * sum(inB.map((r) => Math.abs(applyQm(qm, r.f) - o.s)))) / inB.length;
           acc.mae[b][1] += w;
         }
-        // The gust factor is the station's own: measured gust over measured speed, when there is wind to speak of.
-        if (isNum(o.g) && o.s >= 4) { acc.gf[0] += w * Math.max(o.g, o.s); acc.gf[1] += w * o.s; }
+        // The gust factor is the station's own: measured gust over measured speed, in wind worth riding.
+        if (isNum(o.g) && o.s >= WINDY) { acc.gf[0] += w * Math.max(o.g, o.s); acc.gf[1] += w * o.s; }
       }
       // The blend's member for each lead bucket: this model's newest run in the bucket.
       for (let b = 0; b < LEAD_BUCKETS.length; b++) {
         const r = runs.filter((x) => bucketOf(x.lead) === b).sort((a, c) => a.lead - c.lead)[0];
-        if (r) members[b].push({ model: m, speed: applyQm(sv.qm, r.f), raw: r.f, gust: r.g, dir: r.d, mae: sv.mae[b], gf: sv.gf });
+        if (r) members[b].push({ model: m, speed: applyQm(sv.qm, r.f), raw: r.f, gust: r.g, dir: r.d, mae: sv.mae[b], gf: sv.gf, pooled: tab.pooled[m] });
       }
     }
     if (!paired) return;
     st.pairedHours++;
     if (!inPool) return;
+    const sunUp = isDaylight(o.lat, o.lon, t);
     members.forEach((ms, b) => {
+      // The blend a rider at this station's own spot would see: its own maps and misses.
       const x = blendHour(ms);
       if (!x) return;
       const res = o.s - x.speed;
-      st.residual[b].w += poolWeight;
-      st.residual[b].h[Math.min(RES_BINS - 1, Math.max(0, Math.floor((res - RES_MIN) / RES_STEP)))] += poolWeight;
+      // The range is read when it blows: its quantiles come from daylight hours with 10 kn or more forecast.
+      if (sunUp && x.speed >= WINDY) {
+        st.residual[b].w += poolWeight;
+        st.residual[b].h[Math.min(RES_BINS - 1, Math.max(0, Math.floor((res - RES_MIN) / RES_STEP)))] += poolWeight;
+      }
       // The score: the first two buckets (to 36 h ahead), where every model can take part.
       if (b > 1) return;
       const d = (st.score[day] ??= {});
       const add = (k, err) => { const e = (d[k] ??= [0, 0, 0]); e[0] += err; e[1]++; e[2] += Math.abs(res); };
       add("sensei", Math.abs(res));
+      // …and the blend where there is no sensor to learn from, as at most spots: pooled maps (identity) and misses.
+      const far = blendHour(ms.map((m) => ({ ...m, speed: applyQm(m.pooled.qm, m.raw), mae: m.pooled.mae[b], gf: m.pooled.gf })));
+      d.sensei[2] += Math.abs(o.s - far.speed) - Math.abs(res); // sensei's third slot: Σ|error| of the pooled blend
       for (const m of ms) add(m.model, Math.abs(m.raw - o.s));
     });
   });
@@ -316,8 +327,9 @@ export function build(st) {
   const days = Object.keys(st.score).sort(), totals = {};
   for (const d of days) for (const [k, [e, n, se]] of Object.entries(st.score[d])) { const x = (totals[k] ??= [0, 0, 0]); x[0] += e; x[1] += n; x[2] += se; }
   // Each raw model also carries the blend's miss over the very hours that model was scored on (`senseiMae`): like for like.
+  // `senseiPooledMae`: the blend over the same hours with no station of its own (pooled maps and misses).
   const score = totals.sensei?.[1] ? {
-    days: SCORE_DAYS, from: days[0], to: days.at(-1),
+    days: SCORE_DAYS, from: days[0], to: days.at(-1), senseiPooledMae: +(totals.sensei[2] / totals.sensei[1]).toFixed(2),
     models: Object.fromEntries(Object.entries(totals).map(([k, [e, n, se]]) => [k, k === "sensei" ? { mae: +(e / n).toFixed(2), n } : { mae: +(e / n).toFixed(2), n, senseiMae: +(se / n).toFixed(2) }])),
   } : seed.score;
   const learned = learnedRes.some(Boolean) || Object.values(tab.pooled).some((x) => x.learned) || [...tab.stations.values()].some((s) => Object.values(s.models).some((x) => x.learned));

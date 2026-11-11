@@ -74,9 +74,28 @@ const summarise = (cells: RibbonCell[]) => {
   return ORDER.filter((s) => n.get(s)).map((s) => `${n.get(s)} h ${RIBBON_WORDS[s]}`).join(", ");
 };
 
-export type WeekCell = RibbonCell & { label: string; t: number };
+/** One day of the week at a glance: its colour (the ribbon's states), its best session and its strongest daylight hour. */
+export type WeekCell = RibbonCell & {
+  label: string;
+  /** The day's first daylight hour still ahead (ms epoch). */
+  t: number;
+  /** The day's best session that isn't over: the likeliest, then the longest. Null without one. */
+  session: Session | null;
+  /** The strongest daylight hour still ahead that day, any direction. Null with no daylight left or no forecast. */
+  peak: Hour | null;
+};
 
-/** Seven days from today, each coloured by its best daylight hour (go > soon > strong > wrongdir > off). */
+/** Where tapping a day puts the clock: its session's start, else its strongest daylight hour. */
+export const dayTarget = (c: Pick<WeekCell, "session" | "peak">): number | null => c.session?.start ?? c.peak?.t ?? null;
+
+const span = (s: Session) => s.end - s.start;
+/** The better of two sessions on one day: the likelier, then the longer. */
+const better = (a: Session, b: Session) => ((b.chance ?? 0) - (a.chance ?? 0) || span(b) - span(a)) > 0 ? b : a;
+
+/**
+ * Seven days from today, each coloured by its best daylight hour still ahead (go > soon > strong > wrongdir > off):
+ * what's left of today, then whole days. A session already over doesn't colour today.
+ */
 export function weekCells(hours: Hour[], spot: Spot, all: Session[], now: number, tz: string): WeekCell[] {
   // one representative time per local day, today first
   const days: number[] = [now];
@@ -85,18 +104,44 @@ export function weekCells(hours: Hour[], spot: Spot, all: Session[], now: number
     if (h.t > now && !sameDay(h.t, days[days.length - 1], tz)) days.push(h.t);
   }
   while (days.length < 7) days.push(days[days.length - 1] + 864e5);
-  return days.map((t) => {
+  return days.map((t, i) => {
     const label = fmtWeekday(t, tz);
-    const hs = daylightHours(hours, spot, t, tz);
-    if (!hs.length) return { state: "none" as const, title: `${label} · no forecast`, label, t };
-    const states = hs.map((h) => hourState(h, spot, all));
+    const whole = daylightHours(hours, spot, t, tz);
+    const hs = whole.filter((h) => h.t + HOUR > now);
+    if (!hs.length) return { state: "none" as const, title: `${label} · ${i === 0 && whole.length ? "daylight is over" : "no forecast"}`, label, t, session: null, peak: null };
+    const list = all.filter((x) => sameDay(x.start, hs[0].t, tz) && x.end + HOUR > now);
+    const states = hs.map((h) => hourState(h, spot, list));
     const state = ORDER.find((s) => states.includes(s)) ?? "none";
-    const s = all.find((x) => sameDay(x.start, hs[0].t, tz));
+    const s = list.length ? list.reduce(better) : null;
     const peak = hs.reduce((a, h) => (h.speed > a.speed ? h : a));
     const title = s
       ? `${label} · rideable ${fmtSpan(s.start, s.end + HOUR, tz)}`
       : `${label} · ${RIBBON_WORDS[state]} · best ${Math.round(peak.speed)} kn ${compass(peak.dir)}`;
-    return { state, title, label, t: hs[0].t };
+    return { state, title, label, t: hs[0].t, session: s, peak };
+  });
+}
+
+/** A day of the board's week: the best spot that day, and its cell. */
+export type BoardDay = WeekCell & { spot: Spot };
+
+/**
+ * The week across every spot: for each day the spot with the best answer (a session before a marginal day before the
+ * rest; then the likelier session, the longer one, the stronger wind). `rows` are the spots in board order, each with
+ * its seven cells; ties keep that order.
+ */
+export function bestPerDay(rows: { spot: Spot; cells: WeekCell[] }[]): BoardDay[] {
+  if (!rows.length) return [];
+  return rows[0].cells.map((_, d) => {
+    let best = rows[0];
+    for (const r of rows.slice(1)) {
+      const a = best.cells[d], b = r.cells[d];
+      const diff = ORDER.indexOf(a.state) - ORDER.indexOf(b.state)
+        || (b.session?.chance ?? 0) - (a.session?.chance ?? 0)
+        || (b.session ? span(b.session) : 0) - (a.session ? span(a.session) : 0)
+        || (a.state === "strong" || a.state === "wrongdir" ? 0 : (b.peak?.speed ?? -1) - (a.peak?.speed ?? -1));
+      if (diff > 0) best = r;
+    }
+    return { ...best.cells[d], spot: best.spot };
   });
 }
 

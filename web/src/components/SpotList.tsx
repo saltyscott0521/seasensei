@@ -10,6 +10,7 @@ import { DiscussionCard } from "./home/DiscussionCard";
 import { SpotCard } from "./home/SpotCard";
 import { TAMPA_BAY_CENTRE, TodayHeader } from "./home/TodayHeader";
 import { undoDelete, useLastDeleted } from "./home/undoDelete";
+import { WeekBoard } from "./home/WeekBoard";
 import { Button } from "./ui/Button";
 import { ScrollFade } from "./ui/ScrollFade";
 
@@ -23,7 +24,7 @@ let forgetTimer: ReturnType<typeof setTimeout> | undefined;
 
 /**
  * Home: the Today board. "Today" with the date and daylight, your spots ranked by their verdict (the top one carries
- * the day's answer), then the wind discussion.
+ * the day's answer), the week at a glance (the best spot each day), then the wind discussion.
  */
 export const SpotList = memo(function SpotList({ onSelect, onOpenDiscussion, onAdd, onHover }: {
   onSelect: (s: Spot) => void; onOpenDiscussion: (date: string) => void;
@@ -71,6 +72,8 @@ export const SpotList = memo(function SpotList({ onSelect, onOpenDiscussion, onA
             <Plus /> New spot
           </Button>
         )}
+
+        {spots.length > 0 && settled && <WeekBoard rows={rows} />}
 
         <DiscussionCard onOpen={onOpenDiscussion} />
       </div>

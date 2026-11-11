@@ -1,7 +1,7 @@
 // The session engine: daylight, rideable sessions, a verdict per spot, ranking, and how much the models agree.
 // Pure like wind.ts: no DOM, no fetch, no React.
-import { sessionChance } from "./sensei";
-import { agreement, compass, inArc, isRideable, MODEL_INFO, type Hour, type Model, type ModelCompare, type Spot, type Window } from "./wind";
+import { chanceWord, sessionChance, type ChanceWord } from "./sensei";
+import { agreement, compass, inArc, isRideable, MODEL_INFO, rideState, type Hour, type Model, type ModelCompare, type Spot, type Window } from "./wind";
 
 const HOUR = 3600e3, DAY = 864e5, RAD = Math.PI / 180;
 
@@ -83,6 +83,9 @@ export type Session = Window & {
   /** any hour from NBM */ lowConfidence: boolean;
   /** How likely it is to deliver (0–1; see sensei.ts sessionChance). Only when the hours carry a range (SeaSensei). */
   chance?: number;
+  /** The range a typical hour of it is likely to fall in, kn (the mean of its hours' ranges). Only with a chance. */
+  lo?: number;
+  hi?: number;
 };
 
 export type SessionSpot = Pick<Spot, "lat" | "lon" | "min" | "max" | "dirC" | "dirW">;
@@ -96,8 +99,9 @@ export function meanDir(dirs: number[]) {
 function toSession(hs: Hour[], spot: Pick<Spot, "min">): Session {
   const peakH = hs.reduce((a, h) => (h.speed > a.speed ? h : a));
   const chance = sessionChance(hs, { start: hs[0].t, end: hs[hs.length - 1].t }, spot);
+  const mean = (f: (h: Hour) => number) => hs.reduce((a, h) => a + f(h), 0) / hs.length;
   return {
-    ...(chance != null ? { chance } : null),
+    ...(chance != null ? { chance, lo: mean((h) => h.lo!), hi: mean((h) => h.hi!) } : null),
     start: hs[0].t, end: hs[hs.length - 1].t, hours: hs,
     peak: peakH.speed,
     peakGust: Math.max(...hs.map((h) => h.gust)),
@@ -137,10 +141,17 @@ const fmt = (tz: string, o: Intl.DateTimeFormatOptions) => {
 // Newer ICU puts a narrow no-break space before AM/PM; keep the copy a plain space so it reads and matches predictably.
 const plain = (s: string) => s.replace(/\u202f/g, " ");
 
-/** "1 PM" */
-export const fmtHour = (t: number, tz: string) => plain(fmt(tz, { hour: "numeric" }).format(t));
 /** "6:52 AM" */
 export const fmtClock = (t: number, tz: string) => plain(fmt(tz, { hour: "numeric", minute: "2-digit" }).format(t));
+// Zones that sit on the half or quarter hour (India, Newfoundland, Nepal): a forecast hour there starts at :30 or :45.
+const offHour = new Map<string, boolean>();
+const isOffHour = (tz: string) => {
+  let odd = offHour.get(tz);
+  if (odd == null) offHour.set(tz, (odd = Number(fmt(tz, { minute: "numeric" }).format(Date.UTC(2026, 0, 1))) !== 0));
+  return odd;
+};
+/** "1 PM": a whole hour in the spot's zone. Where the zone sits on the half hour it says so ("1:30 PM"), never rounds. */
+export const fmtHour = (t: number, tz: string) => (t % HOUR !== 0 || isOffHour(tz) ? fmtClock(t, tz) : plain(fmt(tz, { hour: "numeric" }).format(t)));
 /** "Sat" */
 export const fmtWeekday = (t: number, tz: string) => fmt(tz, { weekday: "short" }).format(t);
 /** Same calendar day in tz? */
@@ -166,11 +177,18 @@ export function fmtWindow(w: Window, tz: string, now = Date.now()) {
     : `${fmtDay(w.start, tz, now)} ${fmtHour(w.start, tz)} – ${fmtDay(end, tz, now)} ${fmtHour(end, tz)}`;
 }
 
-/** "18–22 kn SW": mean to peak sustained, and the mean direction. */
-export function fmtStrength(s: Pick<Session, "avg" | "peak" | "dir">) {
-  const lo = Math.round(s.avg), hi = Math.round(s.peak);
+/**
+ * "15–21 kn SW": the range the wind is likely to fall in (SeaSensei), else mean to peak sustained (a raw model), and
+ * the mean direction.
+ */
+export function fmtStrength(s: Pick<Session, "avg" | "peak" | "dir" | "lo" | "hi">) {
+  const ranged = s.lo != null && s.hi != null;
+  const lo = Math.round(ranged ? s.lo! : s.avg), hi = Math.round(ranged ? s.hi! : s.peak);
   return `${lo === hi ? hi : `${lo}–${hi}`} kn ${compass(s.dir)}`;
 }
+
+/** How likely a session is to deliver, in a word ("Likely", "Possible", "Unlikely"); null for a raw model's session. */
+export const chanceOf = (s: Pick<Session, "chance"> | null | undefined): ChanceWord | null => (s?.chance != null ? chanceWord(s.chance) : null);
 
 /** "Today 1–5 PM · 18–22 kn SW" */
 export const fmtSession = (s: Session, tz: string, now = Date.now()) => `${fmtWindow(s, tz, now)} · ${fmtStrength(s)}`;
@@ -233,18 +251,82 @@ export function verdict(spot: SessionSpot, hours: Hour[], list: Session[], now: 
   };
 }
 
-/** What a verdict pill says about now: the engine's states, or "strong" when the wind right now is over the range. */
-export type NowVerdict = { state: VerdictState | "strong"; label: string; detail: string };
+/** A reading this fresh speaks for "now" (the same limit as the forecast's correction); an older one is shown with its age. */
+export const LIVE_MS = 30 * 60_000;
+
+/** The spot's own station, read just now. */
+export type OwnReading = { speed: number; gust?: number | null; dir: number; t: number };
 
 /**
- * The verdict as the card and hero show it: the session engine's, except that wind over the spot's max right now (the
- * live reading, else the model's hour: the map marker's rule) reads "Too strong now", whatever the forecast says. The
- * forecast's answer moves into the detail ("forecast till 5 PM · 21–24 kn SW", "On at 1 PM · 1–5 PM · 18–22 kn SW").
+ * What a verdict pill says about now: the engine's states, "strong" when the wind right now is over the range, and
+ * "light" / "wrongdir" when the forecast says on but the spot's own sensor doesn't.
  */
-export function nowVerdict(v: Verdict, nowSpeed: number | null | undefined, spot: Pick<SessionSpot, "max">, detail = v.detail): NowVerdict {
-  if (nowSpeed == null || !(nowSpeed > spot.max)) return { state: v.state, label: v.label, detail };
-  const said = v.state === "on" ? `forecast ${detail}` : v.state === "none" ? detail : [v.label, detail].filter(Boolean).join(" · ");
-  return { state: "strong", label: "Too strong now", detail: said };
+export type NowVerdict = {
+  state: VerdictState | "strong" | "light" | "wrongdir";
+  label: string;
+  detail: string;
+  /** What the answer rests on. */
+  by: "sensor" | "forecast";
+  /** The same answer in the engine's four states, for ranking and the map: a sensor that reads rideable makes it "on". */
+  verdict: Verdict;
+};
+
+/** When the run of rideable daylight hours that includes `now` ends (ms epoch), or null when this hour isn't one. */
+export function holdsUntil(hours: Hour[], spot: SessionSpot, now: number): number | null {
+  let end: number | null = null;
+  for (const h of hours) {
+    if (h.t + HOUR <= now) continue;
+    if (end == null ? h.t > now : h.t !== end) break;
+    if (!(isRideable(h, spot) && isDaylightHour(spot.lat, spot.lon, h.t))) break;
+    end = h.t + HOUR;
+  }
+  return end;
+}
+
+/**
+ * The verdict as the card, hero and map show it: the session engine's, checked against the wind right now.
+ *
+ * Only a fresh reading (≤ 30 min) from the spot's OWN station can confirm or overrule the forecast; a nearby sensor
+ * is shown beside the verdict and never changes it. In daylight, with such a reading:
+ *   rideable by the sensor           "On now"              "18 kn at the sensor · till 4 PM" (how long the forecast holds it)
+ *   too light, forecast says on      "Too light now"       "Forecast says on, sensor reads 9 kn"
+ *   wrong direction, forecast on     "Wrong direction now" "Forecast says on, sensor reads 18 kn NE"
+ * Day or night, over the spot's max  "Too strong now"      "Forecast says on, sensor reads 31 kn" / "31 kn at the sensor"
+ * Without one, the forecast's own hour over the max still reads "Too strong now".
+ *
+ * `hours` is the forecast as shown (already bent toward that reading); `forecastOn` is whether the forecast, before
+ * the sensor's correction, had a session in progress.
+ */
+export function nowVerdict(v: Verdict, o: {
+  spot: SessionSpot; hours: Hour[]; now: number; tz: string;
+  reading?: OwnReading | null;
+  forecastOn?: boolean;
+  /** The forecast's wind this hour, kn. */
+  forecastSpeed?: number | null;
+  /** Replaces the engine's detail (the card's "why not" line for a spot with no session). */
+  detail?: string;
+}): NowVerdict {
+  const { spot, now, tz } = o, detail = o.detail ?? v.detail;
+  const r = o.reading && now - o.reading.t <= LIVE_MS && o.reading.t <= now + LIVE_MS ? o.reading : null;
+  if (r) {
+    const kn = `${Math.round(r.speed)} kn`, at = `${kn} at the sensor`;
+    const ride = rideState(r.speed, spot, r.dir);
+    const said = (extra = "") => (o.forecastOn ? `Forecast says on, sensor reads ${kn}${extra}` : at);
+    if (ride === "above") return { state: "strong", label: "Too strong now", detail: said(), by: "sensor", verdict: v };
+    if (isDaylight(spot.lat, spot.lon, now)) {
+      if (ride === "good") {
+        const till = holdsUntil(o.hours, spot, now);
+        const d = `${at} · ${till ? `till ${fmtHour(till, tz)}` : "may not last the hour"}`;
+        return { state: "on", label: "On now", detail: d, by: "sensor", verdict: { ...v, state: "on", label: "On now", detail: d, session: v.state === "on" ? v.session : null, gap: 0 } };
+      }
+      if (o.forecastOn && ride === "below") return { state: "light", label: "Too light now", detail: said(), by: "sensor", verdict: v };
+      if (o.forecastOn && ride === "offdir") return { state: "wrongdir", label: "Wrong direction now", detail: said(` ${compass(r.dir)}`), by: "sensor", verdict: v };
+    }
+  } else if (o.forecastSpeed != null && o.forecastSpeed > spot.max) {
+    const said = v.state === "none" ? detail : [v.label, detail].filter(Boolean).join(" · ");
+    return { state: "strong", label: "Too strong now", detail: said, by: "forecast", verdict: v };
+  }
+  return { state: v.state, label: v.label, detail, by: "forecast", verdict: v };
 }
 
 const ORDER: Record<VerdictState, number> = { on: 0, today: 1, upcoming: 2, none: 3 };
@@ -319,10 +401,12 @@ export type Sensor = { kind: "station" | "nearby"; id: string; name: string; t: 
 
 /**
  * The hero's source line: "Live · Old Port Tampa · 0.5 km · 4 min ago", "Nearby sensor · Middle Tampa Bay · 14 km ·
- * 4 min ago", or "HRRR forecast". "Live" is only for the spot's own station.
+ * 4 min ago", or "HRRR forecast". "Live" is only for the spot's own station, and only while its reading is fresh
+ * (≤ 30 min); after that it is "Last reading · Old Port Tampa · 0.5 km · 45 min ago".
  */
 export function sourceLine({ source, sensor, model }: { source: NowSource; sensor: Sensor | null; model?: Model | null }, now = Date.now()) {
   if (source === "model" || !sensor) return `${model ? MODEL_INFO[model].label : "Model"} forecast`;
-  return [source === "station" ? "Live" : "Nearby sensor", sensor.name, sensor.km != null ? fmtKm(sensor.km) : null, ago(sensor.t, now)]
+  const lead = source === "nearby" ? "Nearby sensor" : now - sensor.t <= LIVE_MS ? "Live" : "Last reading";
+  return [lead, sensor.name, sensor.km != null ? fmtKm(sensor.km) : null, ago(sensor.t, now)]
     .filter(Boolean).join(" · ");
 }

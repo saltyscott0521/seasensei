@@ -35,14 +35,29 @@ export function toKnots(qm) {
 }
 
 /**
+ * Is the sun up at this place and instant (unix seconds)? Solar elevation above −0.833°, from the usual
+ * declination and equation-of-time series; good to a minute or two, which is plenty for sorting hours.
+ */
+export function isDaylight(lat, lon, t) {
+  const d = new Date(t * 1000), start = Date.UTC(d.getUTCFullYear(), 0, 1) / 1000, rad = Math.PI / 180;
+  const g = (2 * Math.PI * ((t - start) / 86400)) / 365;
+  const eq = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+  const decl = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g) + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+  const minutes = ((t % 86400) / 60 + eq + 4 * lon + 1440) % 1440; // true solar time
+  const hourAngle = (minutes / 4 - 180) * rad;
+  const sinElev = Math.sin(lat * rad) * Math.sin(decl) + Math.cos(lat * rad) * Math.cos(decl) * Math.cos(hourAngle);
+  return sinElev > Math.sin(-0.833 * rad);
+}
+
+/**
  * One hour's blend. Each member: { speed (calibrated, kn), raw (the model's own speed), gust (its own, or null),
  * dir (degrees, or null), mae (its error at this lead), gf (its fallback gust factor) }. Models without a value
- * simply aren't members. Weights ∝ 1 / mae².
+ * simply aren't members. Weights ∝ 1 / mae⁴ (the backtest's choice: the better model at a lead counts for more).
  */
 export function blendHour(members) {
   const ms = members.filter((m) => Number.isFinite(m.speed) && m.mae > 0);
   if (!ms.length) return null;
-  const ws = ms.map((m) => 1 / m.mae ** 2), total = ws.reduce((a, b) => a + b, 0);
+  const ws = ms.map((m) => 1 / m.mae ** 4), total = ws.reduce((a, b) => a + b, 0);
   const mean = (f) => ms.reduce((a, m, i) => a + ws[i] * f(m), 0) / total;
   const speed = mean((m) => m.speed);
   let u = 0, v = 0;
