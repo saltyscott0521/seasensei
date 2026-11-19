@@ -121,6 +121,34 @@ discarded, counted (`/api/archive` → `discarded`) and retried with back-off. E
 calls and ~2 MB a day. Off unless `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` are set in Coolify
 (`R2_ENDPOINT`/`R2_PREFIX`/`ARCHIVE_BOX` override). Status: `/api/archive`. Signed with `aws4fetch`. Tested in `e2e/server.spec.ts`.
 
+## Morning briefing (Web Push)
+A notification at the rider's chosen time (default 7:00, their device's zone): "Fort De Soto · On at 1 PM" / "1–5 PM · 15–21 kn SW ·
+Likely. Also Picnic Island 3–5 PM (Possible)." or "No session today" / "Next: Sat 11 AM at Skyway (Possible).", plus a marine alert line.
+Modes: every morning, or only when it's on. A tap opens `/?spot=<id>` (or `/`).
+- **One engine**: `src/lib/briefing.ts` (pure) composes it from `sessions()`/`verdict()`/`rankSpots()`; `scripts/build-engine.mjs` (esbuild, on
+  `prebuild`, and in `server.spec.ts`) bundles it with session/sensei/wind/`forecast.ts` (`forecastFrom`)/`marine.ts` (pure alert parsing)
+  into `server/engine.mjs` (gitignored; the Dockerfile copies it from the build stage). It fails if anything outside `src/lib/` sneaks in.
+  The panel's preview uses the same function. Without `engine.mjs` the server runs with push off.
+- **Server**: `server/push.mjs` (VAPID keys, subscriptions, validation, sending via web-push's `generateRequestDetails` + fetch) and
+  `server/briefing.mjs` (cycle every 5 min; due when the local time has passed by ≤ 2 h and today isn't sent; the app's two Open-Meteo
+  requests per place, shared by rounded lat/lon, cached 30 min; calibration = what `/api/calibration` serves; no nowcast; alerts for the
+  featured spot; TTL 3 h, topic `morning-briefing`; today marked only after a 2xx; 404/410 deletes). A newly turned-on briefing whose time
+  passed < 2 h ago sends at once. "Only when it's on" on a calm day records the day as skipped.
+- **Storage**: R2 `push/v1/vapid.json` (made once, `If-None-Match: *`; never regenerated on a read error) and `push/v1/subs/<sha256(endpoint)>.json`
+  (ignore `R2_PREFIX`); without R2, `DATA_DIR/push/`. Env: `VAPID_PUBLIC_KEY`+`VAPID_PRIVATE_KEY` (optional), `VAPID_SUBJECT` (default
+  https://seasensei.com), `PUSH_MAX_SUBSCRIPTIONS` (2000), `PUSH_RATE_LIMIT` (30 per IP per 10 min), `BRIEFING_CHECK_MS`, `BRIEFING_BOOT_DELAY_MS`,
+  `BRIEFING_STALE_MINUTES`; tests only: `PUSH_TEST_ENDPOINT_PREFIX` (allows an http stand-in push service).
+- **API** (same origin, so no CSP change): `GET /api/push/key` (503 when off), `POST /api/push/subscribe` (upsert by endpoint; only known push
+  services' https endpoints: FCM, Mozilla, Windows, Apple — the server POSTs to them, so never loosen this), `POST /api/push/unsubscribe`,
+  `GET /api/push/status` (counts and Open-Meteo calls only). Admin: `POST /api/push/send-now[?endpoint=…][&dry=1]` with
+  `Authorization: Bearer $DISCUSSION_ADMIN_TOKEN`; dry returns the briefing JSON; a real send doesn't count as today's.
+- **Client**: bell in `home/TodayHeader.tsx` → `home/BriefingPanel.tsx` (inside the phone sheet); `lib/briefingClient.ts` keeps settings in
+  localStorage `morningBriefing`, asks permission only on the switch's tap, and `useBriefingSync()` (App) re-posts 1.5 s after spots/model/
+  time/mode change and once per load. `public/sw.js` has `push` and `notificationclick` (caching rules unchanged). iOS needs the Home Screen app.
+- e2e: `briefing.spec.ts`, `briefing-phone.spec.ts` (`fakePush()` and `pushRequests()` in `mocks.ts`); server side in `server.spec.ts`.
+- Cost: ≤ 2 Open-Meteo calls per distinct spot place per 30 min of due briefings (seed spots are shared by everyone): ~6 calls a morning for
+  riders on the seed spots, at most 24 per rider with 12 custom spots.
+
 ## Things that will bite
 - MapLibre 6 finds its worker via `import.meta.url`, which breaks once bundled. `scripts/copy-maplibre-worker.mjs`
   runs on `predev`/`prebuild`; the server must serve `.mjs` as JavaScript (it does, in `server.mjs`'s type table).
@@ -141,4 +169,5 @@ calls and ~2 MB a day. Off unless `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRE
   Don't poll a new asset URL during a swap from a script; wait for the health check.
 - aws4fetch retries 5xx itself; test R2 failures with a 4xx. `obs/v1/` and `calibration/v1/` ignore `R2_PREFIX`.
 - `e2e/server.spec.ts` runs on its own plain seed (`CALIBRATION_SEED_FILE`); one test reads the shipped `calibration-seed.json`.
+- The engine bundle is built, not committed: run `npm run build` (or `npm run build:engine`) before `node server/server.mjs` locally, or push is off.
 - While the panel crossfades, the outgoing view is still in the DOM: `aside` text locators can match twice (use `.last()` or a role).
