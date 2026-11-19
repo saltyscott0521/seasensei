@@ -18,6 +18,7 @@ import { useHeight } from "./components/shell/useHeight";
 import { useLayers } from "./components/shell/useLayers";
 import { ViewTarget } from "./components/shell/ViewTarget";
 import { useMarineAlerts } from "./lib/alerts";
+import { useBriefingSync } from "./lib/briefingClient";
 import { useForecast, usePrimaryModel, useSpots, useWindField } from "./lib/data";
 import {
   bandPadding, CHROME_TOP, desktopBand, DESKTOP_NAV_W, DOCK_EST, EDGE, panelWidth, phoneBand, PILL_H, RAIL_H, sheetSnaps,
@@ -53,6 +54,7 @@ function useBodyFlag(key: string) {
 
 export default function App() {
   const spots = useSpots();
+  useBriefingSync(); // the morning briefing's server copy follows the spots and the model
   const desktop = useDesktop();
   const { vh, vw, sat, sab } = useViewport();
   const { layers, get, push, replace, close } = useLayers();

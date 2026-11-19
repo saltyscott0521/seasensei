@@ -91,6 +91,47 @@ export function calibrationFixture() {
   };
 }
 
+/* ---------- The morning briefing: our push API, and a browser that can do Web Push ---------- */
+
+/** A VAPID public key's shape (65 bytes, base64url): the fake PushManager doesn't check it. */
+export const PUSH_KEY = Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 7)]).toString("base64url");
+const pushCalls = new WeakMap<Page, { path: string; body: any }[]>();
+/** What the app sent to /api/push/subscribe and /api/push/unsubscribe on this page, in order. */
+export const pushRequests = (page: Page) => pushCalls.get(page) ?? [];
+
+/**
+ * Stand-ins for Notification, PushManager and the service worker's pushManager (before the app loads). `answer` is
+ * what the permission prompt answers when asked. `window.__push` shows what happened: { permission, asked, sub,
+ * unsubscribed }.
+ */
+export async function fakePush(page: Page, { answer = "granted" as NotificationPermission } = {}) {
+  await page.addInitScript(({ answer }) => {
+    const st = { permission: "default" as NotificationPermission, asked: 0, sub: null as any, unsubscribed: 0 };
+    (window as any).__push = st;
+    (window as any).Notification = class {
+      static get permission() { return st.permission; }
+      static async requestPermission() { st.asked++; st.permission = answer; return answer; }
+    };
+    (window as any).PushManager = function PushManager() {};
+    const keys = { p256dh: `B${"A".repeat(86)}`, auth: "AAAAAAAAAAAAAAAAAAAAAA" };
+    const pushManager = {
+      async getSubscription() { return st.sub; },
+      async subscribe(o: { applicationServerKey: Uint8Array }) {
+        const endpoint = `https://fcm.googleapis.com/fcm/send/e2e-${Math.random().toString(36).slice(2)}`;
+        st.sub = {
+          endpoint, options: { applicationServerKey: o.applicationServerKey.slice().buffer },
+          toJSON: () => ({ endpoint, expirationTime: null, keys }),
+          unsubscribe: async () => { st.unsubscribed++; st.sub = null; return true; },
+        };
+        return st.sub;
+      },
+    };
+    const reg = { scope: "/", pushManager };
+    const sw = { register: async () => reg, getRegistration: async () => reg, ready: Promise.resolve(reg), controller: null, addEventListener() {}, removeEventListener() {} };
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, get: () => sw });
+  }, { answer });
+}
+
 export async function mockApis(page: Page, opts: MockOptions = {}) {
   await page.route("**/fonts.googleapis.com/**", (r) => r.abort());
   await page.route("**/fonts.gstatic.com/**", (r) => r.abort());
@@ -103,6 +144,15 @@ export async function mockApis(page: Page, opts: MockOptions = {}) {
   });
 
   await page.route("**/api/calibration", (route) => json(route, calibrationFixture()));
+
+  // The morning briefing's API (our server): a key, and every subscribe/unsubscribe recorded for the test.
+  const calls: { path: string; body: any }[] = [];
+  pushCalls.set(page, calls);
+  await page.route("**/api/push/key", (route) => json(route, { publicKey: PUSH_KEY }));
+  await page.route(/\/api\/push\/(subscribe|unsubscribe)$/, (route) => {
+    calls.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    return json(route, { ok: true, status: "created" });
+  });
 
   // NWS alerts for the area: none, unless a test asks for some.
   await page.route("https://api.weather.gov/alerts/active?**", (route) => json(route, { type: "FeatureCollection", features: opts.alerts ?? [] }));

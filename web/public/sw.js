@@ -5,6 +5,7 @@
 //     shell; offline, the shell. Any other page load (/feed.xml, an /api/ URL opened in a tab) just goes to the network,
 //     so a slow one is never answered with the app.
 //  3. Everything else (the API, weather and tiles, icons) is left alone: straight to the network.
+// It also shows the morning briefing (Web Push, server/briefing.mjs) and opens the app where a tap on it points.
 const SHELL = "seasensei-shell-v4";
 const ASSETS = "seasensei-assets-v4";
 const KEEP = [SHELL, ASSETS];
@@ -84,3 +85,30 @@ async function navigate(net) {
     return (await cache.match("/")) || Response.error();
   }
 }
+
+/* ---------- The morning briefing ---------- */
+
+self.addEventListener("push", (e) => {
+  let msg = {};
+  try { msg = e.data ? e.data.json() : {}; } catch { msg = { body: e.data ? e.data.text() : "" }; }
+  const url = typeof msg.url === "string" && msg.url.startsWith("/") ? msg.url : "/";
+  e.waitUntil(self.registration.showNotification(msg.title || "SeaSensei", {
+    body: msg.body || "", icon: "/icon-192.png", badge: "/icon-192.png",
+    tag: msg.tag || "morning-briefing", renotify: false, data: { url },
+  }));
+});
+
+// Focus an open SeaSensei tab and take it to the spot (or the board); with none open, open one.
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || "/", location.origin).href;
+  e.waitUntil((async () => {
+    const tabs = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const tab = tabs.find((c) => new URL(c.url).origin === location.origin);
+    if (tab) {
+      await tab.focus().catch(() => {});
+      try { return await tab.navigate(url); } catch { return self.clients.openWindow(url); } // navigate needs a tab this worker controls
+    }
+    return self.clients.openWindow(url);
+  })());
+});
