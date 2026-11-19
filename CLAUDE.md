@@ -27,7 +27,7 @@ Software WebGL makes runs slow: use `--trace off --workers=2`. Don't edit `src/`
   surfaces (`bg-surface-1/2/3`), text (`text-fg`, `-fg-2`, `-fg-3`: the faintest allowed), `accent`, verdict colours
   (`go`, `soon`, `off`, `strong`, `wrongdir`), radii, type sizes (`text-micro` … `text-display`). Colour is data: chrome is neutral;
   only the wind scale, verdicts and the accent carry colour. The wind scale (`windColor`/`windGradient`/`windStops` in `lib/wind.ts`, used by
-  everything: particles, markers, strip, hour grid, charts, legend) runs grey (0–12 kn) → green (15–17) → blue (18–25) → purple (26–29)
+  everything: particles, markers, strip, hour grid, charts, legend) runs grey (0–11 kn) → green (14–17) → blue (18–25) → purple (26–29)
   → deep purple-magenta (30+); its green leans yellow so it never reads as the emerald `go` (`spot.spec.ts` checks the hues). Use the primitives (Button, IconButton, Chip, Card, Segmented,
   VerdictPill, ConfidenceDots, Ribbon, …) instead of ad-hoc `text-white/NN`. `.num` is Geist with tabular figures (no mono).
 - **Motion** (`src/lib/motion.ts`): duration/spring/ease tokens; `<MotionConfig reducedMotion="user">` wraps the app. Animate
