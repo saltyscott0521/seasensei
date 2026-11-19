@@ -66,7 +66,7 @@ test("sessions read as a schedule, and picking one puts the charts and the hour 
   // the hour grid marks the same hour, inside the session
   const marked = hourTable(page).locator('th[aria-current="time"]');
   await expect(marked).toHaveCount(1);
-  const [, h, ap] = (await marked.textContent())!.match(/^(\d+) (AM|PM)$/)!;
+  const [, h, ap] = (await marked.getAttribute("aria-label"))!.match(/^(\d+) (AM|PM)$/)!;
   expect(minutes(h, ap)).toBeGreaterThanOrEqual(minutes(span[1], span[2] ?? span[4]));
   expect(minutes(h, ap)).toBeLessThan(minutes(span[3], span[4]));
 
@@ -77,14 +77,36 @@ test("sessions read as a schedule, and picking one puts the charts and the hour 
   await expect(marked).toHaveCount(0);
 });
 
-test("the hour grid is a real table from now: night shaded, the mouse wheel scrolls it sideways", async ({ page }) => {
+test("the hour grid is a real table from now: each hour says its answer, night shaded, the mouse wheel scrolls it sideways", async ({ page }) => {
   await openSpot(page, "Fort De Soto");
   const table = hourTable(page);
   await expect(table.getByRole("columnheader", { name: "Now", exact: true })).toBeVisible();
-  for (const r of ["kn", "Gust", "From", "Ride"]) await expect(table.getByRole("rowheader", { name: r, exact: true })).toBeVisible();
+  // every hour is one cell that says it all in words: time, speed, gust, direction and the answer
+  const STATE = "(rideable|marginal|too light|too strong|wrong direction|night)";
+  await expect(table.getByRole("cell", { name: new RegExp(`^Now: \\d+ kn(, likely \\d+–\\d+)?, gusts \\d+, from [NESW]+, ${STATE}$`) })).toBeVisible();
   // 3 AM is dark in Tampa all year; noon never is
-  await expect(table.getByRole("columnheader", { name: "3 AM", exact: true }).first()).toHaveAttribute("data-night", "true");
-  await expect(table.getByRole("columnheader", { name: "12 PM", exact: true }).first()).not.toHaveAttribute("data-night");
+  const at = async (hour: string) => {
+    const th = table.getByRole("columnheader", { name: hour, exact: true }).first();
+    return { th, cell: table.locator(`td[data-t="${await th.getAttribute("data-t")}"]`) };
+  };
+  const three = await at("3 AM"), noon = await at("12 PM");
+  await expect(three.th).toHaveAttribute("data-night", "true");
+  await expect(noon.th).not.toHaveAttribute("data-night");
+  // a night hour is never rideable, whatever the wind; the mock's afternoon session is, and its hours read as one run
+  await expect(three.cell).toHaveAttribute("data-ride", "night");
+  await expect(three.cell).toHaveAccessibleName(/, night$/);
+  const go = table.locator('td[data-ride="go"]');
+  expect(await go.count()).toBeGreaterThanOrEqual(2);
+  await expect(go.first()).toHaveAccessibleName(/^\d+ (AM|PM): \d+ kn.*, rideable$/);
+  const t0 = Number(await go.first().getAttribute("data-t"));
+  await expect(table.locator(`th[data-t="${t0}"]`)).not.toHaveAttribute("data-night");
+  await expect(table.locator(`td[data-t="${t0 + 3600e3}"]`)).toHaveAttribute("data-ride", "go");
+  const [a, b] = await Promise.all([t0, t0 + 3600e3].map((t) => table.locator(`td[data-t="${t}"] [data-band]`).boundingBox()));
+  expect(Math.abs(a!.x + a!.width - b!.x)).toBeLessThan(1); // joined: no gap inside a run
+  // the bars are on one scale: a stronger hour stands taller
+  const bar = (t: number) => table.locator(`td[data-t="${t}"] [data-bar]`).boundingBox();
+  const [nb, tb] = await Promise.all([bar(Number(await noon.th.getAttribute("data-t"))), bar(Number(await three.th.getAttribute("data-t")))]);
+  expect(nb!.height).toBeGreaterThan(tb!.height * 1.4); // the mock: ~23 kn at noon, ~14 kn at 3 AM
 
   // a vertical wheel over the grid scrolls the hours, not the panel
   const grid = page.getByRole("region", { name: /Hour by hour, scrolls sideways/ });
@@ -100,6 +122,8 @@ test("the hour grid is a real table from now: night shaded, the mouse wheel scro
 
 test("one clock: the timeline's hour drives the hero and the hour grid", async ({ page }) => {
   await openSpot(page, "Fort De Soto");
+  const vp = page.viewportSize()!;
+  await page.mouse.move(vp.width - 4, vp.height / 2); // over the map: a pointer left resting on a chart would put its own cursor on the grid
   const panel = page.locator("aside");
   await expect(panel.getByText("SeaSensei said for this hour")).toBeVisible();
   const slider = page.getByRole("slider", { name: "Forecast time" });
@@ -110,7 +134,7 @@ test("one clock: the timeline's hour drives the hero and the hour grid", async (
   await expect(line).toBeVisible();
   await expect(panel.getByText("SeaSensei said for this hour")).toHaveCount(0); // a forecast hour has nothing live to compare
   const hour = (await line.textContent())!.match(/\d+ (AM|PM)/)![0];
-  await expect(hourTable(page).locator('th[aria-current="time"]')).toHaveText(hour);
+  await expect(hourTable(page).locator('th[aria-current="time"]')).toHaveAccessibleName(hour);
 
   await page.getByRole("button", { name: "Back to now" }).click();
   await expect(panel.getByText(/^Nearby sensor · Middle Tampa Bay/)).toBeVisible();
@@ -135,8 +159,8 @@ test("night has one word, and the hero tells before sunrise from after dark", as
   await expect(panel.getByText("· before sunrise")).toBeVisible();
   await expect(panel.getByText(/after dark/)).toHaveCount(0);
   // the hour grid's key and the chart key say "Night" alike
-  await expect(page.getByRole("list", { name: "The ride row" }).getByText("Night", { exact: true })).toBeVisible();
-  await expect(page.getByRole("list", { name: "The ride row" }).getByText("Dark", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Colour key" }).getByText("Night", { exact: true })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Colour key" }).getByText("Dark", { exact: true })).toHaveCount(0);
 });
 
 test("settings: rename the spot, then Escape closes the settings before it leaves the spot", async ({ page }) => {
@@ -279,11 +303,10 @@ test("sessions, the hero and the hour grid give a range and a chance in plain wo
   }
   await expect(panel.getByText(/spread|confidence|Models (agree|disagree)/)).toHaveCount(0);
 
-  // the hour grid has the range under each hour's speed
-  const range = hourTable(page).getByRole("row", { name: /^Likely/ });
-  const cells = await range.getByRole("cell").allTextContents();
+  // the hour grid gives each hour's range in its name and tooltip
+  const cells = await hourTable(page).locator("td[data-ride]").evaluateAll((els) => els.map((e) => e.getAttribute("title")));
   expect(cells.length).toBeGreaterThan(100);
-  for (const c of cells.slice(0, 48)) expect(c).toMatch(/^\d+–\d+$/);
+  for (const c of cells.slice(0, 48)) expect(c).toMatch(/: \d+ kn, likely \d+–\d+, gusts/);
 
   // a forecast hour in the hero: its speed inside the range it is likely to fall in
   const slider = page.getByRole("slider", { name: "Forecast time" });

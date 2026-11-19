@@ -106,8 +106,10 @@ export function NowLine({ x, box, tagY = 3, tag = true }: { x: number; box: Box;
  * its name. With `confidence`, the NBM tail is labelled "NBM · lower confidence" (and the sharper model before the
  * first handoff is named too).
  */
-export function Handoffs({ hand, box, W, labelY, confidence }: {
+export function Handoffs({ hand, box, W, labelY, confidence, labels = true }: {
   hand: { t: number; x: number; from: Model; to: Model }[]; box: Box; W: number; labelY: number; confidence?: boolean;
+  /** false while a cursor readout sits in the same top band: the lines stay, the names step aside (never under the pill). */
+  labels?: boolean;
 }) {
   return (
     <>
@@ -117,11 +119,13 @@ export function Handoffs({ hand, box, W, labelY, confidence }: {
         return (
           <g key={d.t} pointerEvents="none" data-handoff={to.label}>
             <line x1={d.x} x2={d.x} y1={box.t - 2} y2={box.b} stroke={to.color} strokeOpacity=".6" strokeDasharray="3 3" />
-            {confidence && k === 0 && right && d.x - box.l > 40 && (
+            {labels && confidence && k === 0 && right && d.x - box.l > 40 && (
               <text x={d.x - 5} y={labelY} textAnchor="end" fontSize="10" fontWeight="600" className="fill-fg-3">{MODEL_INFO[d.from].label}</text>
             )}
-            <text x={right ? d.x + 5 : d.x - 5} y={labelY} textAnchor={right ? "start" : "end"} fontSize="10" fontWeight="600"
-              fill={to.color}>{text}</text>
+            {labels && (
+              <text x={right ? d.x + 5 : d.x - 5} y={labelY} textAnchor={right ? "start" : "end"} fontSize="10" fontWeight="600"
+                fill={to.color}>{text}</text>
+            )}
           </g>
         );
       })}
@@ -162,7 +166,7 @@ export function Pill({ x, y, minX, maxX, children }: { x: number; y: number; min
   });
   return (
     <g ref={g} pointerEvents="none" transform={`translate(${x} ${y})`}>
-      <rect ref={rect} height={20} rx={6} className="fill-ink/90 stroke-line-strong" />
+      <rect ref={rect} height={20} rx={6} className="fill-ink stroke-line-strong" />
       <text ref={text} y={13.5} textAnchor="middle" fontSize="11" className="num fill-fg-2">{children}</text>
     </g>
   );

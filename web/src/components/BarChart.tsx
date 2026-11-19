@@ -117,7 +117,7 @@ export const BarChart = memo(function BarChart({ forecast, spot, range, obs, scr
           ))}
         </DrawIn>
 
-        <Handoffs hand={m.hand} box={axisBox} W={W} labelY={14} />
+        <Handoffs hand={m.hand} box={axisBox} W={W} labelY={14} labels={!cur} />
         {nowX != null && <NowLine x={nowX} box={axisBox} tag={!cur} />}
 
         {cur && ci != null && (
