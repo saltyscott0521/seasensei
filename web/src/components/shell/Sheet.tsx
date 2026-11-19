@@ -3,8 +3,8 @@ import { useCallback, useId, useLayoutEffect, useRef, type FocusEvent, type Keyb
 import { Drawer } from "vaul";
 import { SNAP_FULL, SNAP_HANDLE, SNAP_MID, SNAP_NAMES, SNAP_REST, type SnapIndex } from "../../lib/layout";
 
-/** Where the timeline goes: floating above the sheet, inside it, kept but hidden (full sheet), or not at all (adding). */
-export type TimelinePlace = "float" | "inline" | "hidden" | "none";
+/** Where the timeline goes: floating above the sheet, kept but faded out (full sheet, or no room), or not at all (adding). */
+export type TimelinePlace = "float" | "hidden" | "none";
 
 const POSITION = ["Lowered to the day's answer, the map open", "Showing the top of your spots", "Half open", "Full screen"] as const;
 
@@ -30,7 +30,7 @@ export const sheetEscapes = new WeakSet<Event>();
  * re-blurring a moving map under most of the screen is the most expensive thing a phone GPU does here, and a
  * sheet of text reads best on an opaque ground.
  */
-export function Sheet({ snaps, index, onIndex, timeline, place, children, scrollRef, onScroll, floatRef, status, summary }: {
+export function Sheet({ snaps, index, onIndex, timeline, place, children, scrollRef, onScroll, floatRef, status, summary, briefing }: {
   snaps: readonly (string | number)[];
   index: SnapIndex;
   onIndex: (i: SnapIndex) => void;
@@ -45,6 +45,8 @@ export function Sheet({ snaps, index, onIndex, timeline, place, children, scroll
   status: string;
   /** The one line shown at the handle snap (a button that raises the sheet). */
   summary: ReactNode;
+  /** The morning briefing's way in for keyboards and screen readers (the bell on the map is aria-hidden by vaul). */
+  briefing?: ReactNode;
 }) {
   const full = index === SNAP_FULL;
   const low = index <= SNAP_REST; // handle or rest: the whole sheet is a handle, its content doesn't scroll
@@ -111,8 +113,10 @@ export function Sheet({ snaps, index, onIndex, timeline, place, children, scroll
           <Drawer.Title className="sr-only">Spots</Drawer.Title>
           <h1 className="sr-only">SeaSensei</h1>
           <p role="status" className="sr-only">{status}</p>
-          {/* Riding on the sheet's top edge (inside it on purpose: everything outside is aria-hidden). Dragging on it
-              scrubs the week, never the sheet. Kept mounted, just hidden, while the sheet is full. */}
+          {briefing}
+          {/* Riding on the sheet's top edge at every snap (inside it on purpose: everything outside is aria-hidden), never
+              in the sheet's content. Dragging on it scrubs the week, never the sheet. Kept mounted, faded out, where there
+              is no room for it (the full sheet, a short phone's mid): it comes back as the sheet goes down. */}
           {(place === "float" || place === "hidden") && (
             <div ref={floatRef} data-vaul-no-drag data-floating-timeline
               className={clsx("absolute inset-x-3 bottom-full mb-2 transition-[opacity,visibility] duration-200 ease-ui",
@@ -141,7 +145,6 @@ export function Sheet({ snaps, index, onIndex, timeline, place, children, scroll
           <div ref={setScroller} onScroll={handleScroll} onFocus={onFocus} data-vaul-no-drag={!low ? "" : undefined}
             className={clsx("sheet-scroll relative min-h-0 flex-1 px-4 pt-1 transition-opacity duration-200 ease-ui motion-reduce:transition-none",
               low ? "overflow-hidden" : "overflow-y-auto overscroll-contain", handle && "opacity-0")}>
-            {place === "inline" && <div data-inline-timeline className="mb-3">{timeline}</div>}
             {children}
           </div>
         </Drawer.Content>

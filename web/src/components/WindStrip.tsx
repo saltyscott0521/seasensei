@@ -25,16 +25,21 @@ const frac = (kn: number) => Math.pow(Math.min(1, Math.max(0, kn) / FULL_KN), CU
  * The week as a strip of wind: one thin bar per forecast hour, touching, its height the strongest wind in view
  * (dramatic on purpose) and filled with the map's wind scale, night hours dimmed, day names over dotted dividers, your
  * threshold as a dashed line. The chosen hour is a rounded frame (the slider's thumb: keyboard and screen readers use it,
- * "Forecast time"); a tap anywhere jumps there, and a drag scrubs. `compact`: a short strip with no names or threshold,
- * for the timeline riding inside a short phone's sheet.
+ * "Forecast time"); a tap anywhere jumps there, and a drag scrubs. `size`: `compact` is a short strip with no names or
+ * threshold (a short phone's resting sheet leaves little map); `tall` nearly doubles the bars and enlarges the day
+ * names and the threshold tag, for the phone's handle snap, where the map has the room.
  */
-export function WindStrip({ area, index, threshold, nbmFrom, days, nights, onSeek, summary, valueText, thumbRef, compact }: {
+export type StripSize = "compact" | "normal" | "tall";
+const BARS_H: Record<StripSize, number> = { compact: 20, normal: 44, tall: 84 };
+const LABELS: Record<StripSize, { h: number; font: number }> = { compact: { h: 0, font: 10 }, normal: { h: LABEL_H, font: 10 }, tall: { h: 16, font: 12 } };
+
+export function WindStrip({ area, index, threshold, nbmFrom, days, nights, onSeek, summary, valueText, thumbRef, size = "normal" }: {
   area: Area[]; index: number; threshold: number; nbmFrom: number; days: Day[]; nights: [number, number][];
-  onSeek: (i: number) => void; summary: string; valueText: string; thumbRef: Ref<HTMLSpanElement>; compact?: boolean;
+  onSeek: (i: number) => void; summary: string; valueText: string; thumbRef: Ref<HTMLSpanElement>; size?: StripSize;
 }) {
-  // compact: the old slider's 20px, so the board under an inline timeline keeps its place on a short phone
-  const barsH = compact ? 20 : 44;
-  const labelH = compact ? 0 : LABEL_H;
+  const compact = size === "compact";
+  const barsH = BARS_H[size];
+  const labelH = LABELS[size].h;
   const H = labelH + barsH;
   const [ref, { w: W }] = useChartSize(H, 0, H);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -46,7 +51,7 @@ export function WindStrip({ area, index, threshold, nbmFrom, days, nights, onSee
   };
 
   return (
-    <div ref={ref} className="relative" style={{ height: H }} data-wind-strip>
+    <div ref={ref} className="relative" style={{ height: H }} data-wind-strip={size}>
       {W > 0 && (
         <svg ref={svgRef} width={W} height={H} viewBox={`0 0 ${W} ${H}`}
           className="block cursor-grab touch-none select-none active:cursor-grabbing"
@@ -54,7 +59,7 @@ export function WindStrip({ area, index, threshold, nbmFrom, days, nights, onSee
           aria-label={compact ? undefined : `Wind in view over the next week${summary ? `: ${summary}` : ""}`}
           onPointerDown={(e) => { if (e.button !== 0) return; (e.currentTarget as Element).setPointerCapture?.(e.pointerId); seekAt(e); }}
           onPointerMove={(e) => e.buttons && seekAt(e)}>
-          <Bars area={area} W={W} H={H} labelH={labelH} threshold={threshold} nbmFrom={nbmFrom} days={days} nights={nights} compact={compact} />
+          <Bars area={area} W={W} H={H} labelH={labelH} font={LABELS[size].font} threshold={threshold} nbmFrom={nbmFrom} days={days} nights={nights} compact={compact} />
         </svg>
       )}
       {/* The slider sits over the bars and takes no pointer (the strip above does that, with the same scale); it is the
@@ -71,8 +76,8 @@ export function WindStrip({ area, index, threshold, nbmFrom, days, nights, onSee
 }
 
 /** Everything that doesn't move with the frame. Memoised: scrubbing only moves the thumb. Draws in once per visit. */
-const Bars = memo(function Bars({ area, W, H, labelH, threshold, nbmFrom, days, nights, compact }: {
-  area: Area[]; W: number; H: number; labelH: number; threshold: number; nbmFrom: number; days: Day[]; nights: [number, number][];
+const Bars = memo(function Bars({ area, W, H, labelH, font, threshold, nbmFrom, days, nights, compact }: {
+  area: Area[]; W: number; H: number; labelH: number; font: number; threshold: number; nbmFrom: number; days: Day[]; nights: [number, number][];
   compact?: boolean;
 }) {
   const gradId = useSvgId("strip");
@@ -117,15 +122,15 @@ const Bars = memo(function Bars({ area, W, H, labelH, threshold, nbmFrom, days, 
         return (
           <g key={i}>
             <line x1={dx} x2={dx} y1={compact ? 0 : 1} y2={bottom} strokeDasharray="1 2.5" className="stroke-line-strong" />
-            {!compact && next - dx >= labelWidth(label) + 6 && dx >= labelWidth("Now") + 8 && <text x={dx + 4} y={9} fontSize="10" fontWeight="600" className="fill-fg-3">{label}</text>}
+            {!compact && next - dx >= labelWidth(label, font) + 6 && dx >= labelWidth("Now", font) + 8 && <text x={dx + 4} y={font - 1} fontSize={font} fontWeight="600" className="fill-fg-3">{label}</text>}
           </g>
         );
       })}
-      {!compact && <text x={2} y={9} fontSize="10" fontWeight="600" className="fill-fg-2">Now</text>}
+      {!compact && <text x={2} y={font - 1} fontSize={font} fontWeight="600" className="fill-fg-2">Now</text>}
       {nbmFrom > 0 && <line x1={x(nbmFrom)} x2={x(nbmFrom)} y1={labelH} y2={bottom} stroke={MODEL_INFO.nbm.color} strokeOpacity=".6" strokeDasharray="2 3" />}
       {!compact && <>
         <line x1={0} x2={W} y1={y(threshold)} y2={y(threshold)} strokeDasharray="3 3" className="stroke-fg-2" strokeOpacity=".7" />
-        <ThresholdTag area={area} m={m} W={W} H={H} threshold={threshold} days={days} />
+        <ThresholdTag area={area} m={m} W={W} H={H} threshold={threshold} days={days} labelH={labelH} font={font} />
       </>}
     </g>
   );
@@ -136,23 +141,24 @@ const Bars = memo(function Bars({ area, W, H, labelH, threshold, nbmFrom, days, 
  * clears the bars, the day dividers and their names: the right end, then the left, then along the line from the right,
  * under or over it. Where the bars run everywhere, the first place clear of the days.
  */
-function ThresholdTag({ area, m, W, H, threshold, days }: {
+function ThresholdTag({ area, m, W, H, threshold, days, labelH, font }: {
   area: Area[]; m: { x: (i: number) => number; y: (v: number) => number }; W: number; H: number; threshold: number; days: Day[];
+  labelH: number; font: number;
 }) {
   const text = `${threshold} kn`;
-  const w = Math.ceil(labelWidth(text)) + 6, h = 12, ly = m.y(threshold);
+  const w = Math.ceil(labelWidth(text, font)) + 6, h = font + 2, ly = m.y(threshold);
   const last = Math.max(1, area.length - 1);
   const xs = [W - w - 2, 2];
   for (let x = W - w - 10; x > 2; x -= 8) xs.push(x);
-  const ys = [ly - 2 - h, ly + 2].filter((y) => y >= LABEL_H && y + h <= H);
+  const ys = [ly - 2 - h, ly + 2].filter((y) => y >= labelH && y + h <= H);
   const clear = (x0: number, y0: number, bars: boolean) => {
     const x1 = x0 + w, y1 = y0 + h;
     for (const { i, label } of days) {
       const dx = m.x(i);
       if (dx >= x0 - 3 && dx <= x1 + 3) return false;
-      if (y0 < 12 && dx + 4 < x1 && dx + 4 + labelWidth(label) > x0) return false;
+      if (y0 < labelH && dx + 4 < x1 && dx + 4 + labelWidth(label, font) > x0) return false;
     }
-    if (x0 < labelWidth("Now") + 4 && y0 < 12) return false;
+    if (x0 < labelWidth("Now", font) + 4 && y0 < labelH) return false;
     if (bars) for (let i = 0; i <= last; i++) {
       const a = area[i];
       if (!a || m.x(i) < x0 - 2 || m.x(i) > x1 + 2) continue;
@@ -165,7 +171,7 @@ function ThresholdTag({ area, m, W, H, threshold, days }: {
   return (
     <g data-threshold-tag transform={`translate(${at[0]},${at[1]})`}>
       <rect width={w} height={h} rx={3} className={clsx("fill-ink")} fillOpacity=".9" />
-      <text x={w / 2} y={9} textAnchor="middle" fontSize="10" fontWeight="600" className="num fill-fg-2">{text}</text>
+      <text x={w / 2} y={font - 1} textAnchor="middle" fontSize={font} fontWeight="600" className="num fill-fg-2">{text}</text>
     </g>
   );
 }

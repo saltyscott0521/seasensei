@@ -51,10 +51,16 @@ test("a spot's detail on a raw model: live vs model, 7 days through RRFS to NBM,
   expect((await line.boundingBox())!.height).toBeGreaterThan(240);
   expect((await bars.boundingBox())!.height).toBeGreaterThan(140);
   await expect.poll(async () => new Set(await bars.locator("rect[fill^='rgba(']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")))).size).toBeGreaterThan(6);
-  // the scale follows the rider's ranges: 15–20 kn green, 20–30 kn purple (mock wind swings 8–24 kn)
-  const fills = () => bars.locator("rect[fill^='rgba(']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")));
-  await expect.poll(async () => (await fills()).includes("rgba(34,197,94,1)")).toBe(true);
-  await expect.poll(async () => (await fills()).includes("rgba(168,85,247,1)")).toBe(true);
+  // the scale follows the rider's ranges: ~15–18 kn green, ~20–24 kn blue (mock wind swings 8–24 kn); by hue
+  const hues = () => bars.locator("rect[fill^='rgba(']").evaluateAll((rs) => rs.map((r) => {
+    const [R, G, B] = r.getAttribute("fill")!.match(/[\d.]+/g)!.slice(0, 3).map((v) => +v / 255);
+    const max = Math.max(R, G, B), d = max - Math.min(R, G, B);
+    if (d < 0.15) return -1; // grey
+    const h = max === R ? 60 * (((G - B) / d) % 6) : max === G ? 60 * ((B - R) / d + 2) : 60 * ((R - G) / d + 4);
+    return (h + 360) % 360;
+  }));
+  await expect.poll(async () => (await hues()).some((h) => h >= 95 && h <= 140)).toBe(true);
+  await expect.poll(async () => (await hues()).some((h) => h >= 205 && h <= 240)).toBe(true);
   await expect.poll(async () => new Set(await bars.locator("rect[height='7']").evaluateAll((rs) => rs.map((r) => r.getAttribute("fill")))).size).toBeGreaterThan(1);
   // scrubbing one chart moves the cursor and readout on the other
   await bars.scrollIntoViewIfNeeded();

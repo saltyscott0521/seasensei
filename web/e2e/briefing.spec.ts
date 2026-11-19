@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { fakePush, mockApis, pushRequests } from "./mocks";
 
-// The morning briefing, set up from the bell in the Today header: permission is asked only on the switch's tap, the
+// The morning briefing, set up from the bell in the panel's header (a popover beside the panel, not in the board): permission is asked only on the switch's tap, the
 // server gets the spots, time, zone, mode and model, and every change (time, mode, model, a deleted spot) is re-sent.
 test.use({ locale: "en-US", timezoneId: "America/Chicago" });
 
@@ -27,7 +27,8 @@ test("turning it on asks for permission on the tap and sends the spots, time, zo
   await expect(sw).toHaveAttribute("aria-checked", "false");
   await expect(page.getByLabel("Briefing time")).toHaveValue("07:00");
   // what the next one would say, from the board's forecasts
-  await expect(page.getByText(/^(Today|Mon|Tue|Wed|Thu|Fri|Sat|Sun) 7:00 AM · /)).toBeVisible();
+  // (the day's shape first: "Morning 5–10 kn E · Afternoon …", then the session)
+  await expect(page.getByText(/^(Today|Mon|Tue|Wed|Thu|Fri|Sat|Sun) 7:00 AM · .+ · (Morning|Afternoon) \d+(–\d+)? kn [NESW]{1,3}/)).toBeVisible();
   expect((await pushState(page)).asked).toBe(0); // opening the panel asks nothing
 
   await sw.click();
@@ -86,6 +87,28 @@ test("deleting a spot re-sends the briefing without it; turning it off unsubscri
   await page.getByLabel("Briefing time").fill("08:00");
   await page.waitForTimeout(2000);
   expect(pushRequests(page).at(-1)!.path).toBe("/api/push/unsubscribe");
+});
+
+test("the bell sits in the panel's header and opens a popover beside the panel; Escape closes it and focus goes back", async ({ page }) => {
+  await open(page);
+  const bell = page.getByRole("button", { name: "Morning briefing" });
+  const aside = page.locator("aside");
+  await expect(aside.locator("header").getByRole("button", { name: "Morning briefing" })).toHaveCount(1);
+  const pop = page.getByRole("dialog", { name: "Morning briefing" });
+  await expect(pop).toBeVisible();
+  await expect(aside.getByRole("heading", { name: "Morning briefing" })).toHaveCount(0); // not in the board
+  const [a, p] = [(await aside.boundingBox())!, (await pop.boundingBox())!];
+  expect(p.x).toBeGreaterThanOrEqual(a.x + a.width);
+  await page.keyboard.press("Escape");
+  await expect(pop).toHaveCount(0);
+  await expect(bell).toBeFocused();
+  await expect(bell).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible(); // Escape closed only the popover
+  // a click elsewhere closes it too
+  await bell.click();
+  await expect(pop).toBeVisible();
+  await page.getByRole("heading", { name: "Today", exact: true }).click();
+  await expect(pop).toHaveCount(0);
 });
 
 test("blocked notifications are explained, and nothing is subscribed", async ({ page }) => {

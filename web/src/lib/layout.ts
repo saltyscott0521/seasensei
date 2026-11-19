@@ -75,11 +75,33 @@ export const RAIL_H = ACTIONS_H + RAIL_GAP + NAV_H;
  * The floating timeline stays below it.
  */
 export const LEGEND_CLEAR = CHROME_TOP + RAIL_H + 8;
-/** Room the floating timeline takes above the sheet: the card (≤ 132px on phones) and an 8px gap. */
-export const TIMELINE_LIFT = 140;
+/**
+ * The phone timeline's sizes. It always floats above the sheet's top edge (never inside the sheet): `tall` at the handle
+ * snap, where the map has the room (a taller strip, bigger day names), `normal` at rest and mid, `compact` (a short strip,
+ * no day names) where only that fits under the rail. Where none fits, and at full, it fades out (and comes back lower).
+ */
+export type TimelineSize = "compact" | "normal" | "tall";
+/**
+ * The card's height on phones per size (measured 84 / 120 / 168, with a little room). App reserves at least this much
+ * map for it, more if the measured card is taller. On the shortest phones (320×568) nothing fits at rest or mid, under
+ * the 164px rail: the timeline fades out there and floats, tall, at the handle.
+ */
+export const TIMELINE_H: Record<TimelineSize, number> = { compact: 84, normal: 124, tall: 172 };
+/** The gap between the floating card and the sheet. */
+export const TIMELINE_GAP = 8;
+/** Room the normal timeline takes above the sheet: the card and the gap. */
+export const TIMELINE_LIFT = TIMELINE_H.normal + TIMELINE_GAP;
 
-/** Whether the timeline can float above the sheet without running into the control rail. */
+/** Whether a timeline card this tall can float above the sheet without running into the control rail. */
 export const timelineFloatsAt = (sheetTop: number, sat: number, lift = TIMELINE_LIFT) => sheetTop >= LEGEND_CLEAR + sat + lift;
+
+/** Where the phone timeline goes at a snap, and how tall: the largest size that floats there, or hidden. */
+export function phoneTimeline(snap: SnapIndex, sheetTop: number, sat: number): { place: "float" | "hidden"; size: TimelineSize } {
+  if (snap === SNAP_FULL) return { place: "hidden", size: "normal" };
+  const sizes: TimelineSize[] = snap === SNAP_HANDLE ? ["tall", "normal", "compact"] : ["normal", "compact"];
+  const size = sizes.find((z) => timelineFloatsAt(sheetTop, sat, TIMELINE_H[z] + TIMELINE_GAP));
+  return size ? { place: "float", size } : { place: "hidden", size: "normal" };
+}
 
 // ── Desktop: the docked panel and the timeline dock ─────────────────────────────────────────────────────────
 /** Margin around the docked panel and the floating desktop chrome. */

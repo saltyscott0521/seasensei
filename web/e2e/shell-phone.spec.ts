@@ -201,7 +201,7 @@ for (const size of [{ width: 412, height: 839, name: "Pixel 7" }, { width: 375, 
     const card = await box(timelineCard(page));
     expect(card.y + card.height).toBeLessThanOrEqual(top);
     for (const label of RAIL) expect(overlap(card, await box(page.locator(`button[aria-label="${label}"]`))), label).toBe(false);
-    await expect(page.locator("[data-inline-timeline]")).toHaveCount(0);
+    expect((await floating(page)).inSheet).toBe(0);
     await expect(page.getByRole("img", { name: /^Wind in view over the next week/ })).toBeInViewport();
     // the answer without touching anything: the two best spots' names and verdicts
     await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeInViewport();
@@ -214,15 +214,78 @@ for (const size of [{ width: 412, height: 839, name: "Pixel 7" }, { width: 375, 
   });
 }
 
-test("phone (320×568): too short to float, the timeline rides in the sheet as one compact card: outlook and slider, no chart", async ({ page }) => {
+/** The floating timeline's card, its strip's size and height, and whether any of it is inside the sheet's scroll. */
+const floating = async (page: Page) => {
+  const card = timelineCard(page);
+  return {
+    box: await card.boundingBox(),
+    visible: await card.isVisible(),
+    size: await card.getAttribute("data-size"),
+    strip: (await page.locator("[data-floating-timeline] [data-wind-strip]").boundingBox())?.height ?? 0,
+    inSheet: await sheet(page).locator(".sheet-scroll [data-wind-strip], .sheet-scroll [data-testid=outlook]").count(),
+  };
+};
+const toSnap = async (page: Page, name: string, key: "ArrowUp" | "ArrowDown") => {
+  await page.getByRole("button", { name: /^(Expand|Collapse) spots$/ }).focus();
+  await page.keyboard.press(key);
+  await expect(sheet(page)).toHaveAttribute("data-snap", name);
+  return settledTop(page);
+};
+
+test("phone: through every snap the timeline floats above the sheet, never inside it; taller at the handle, faded out at full", async ({ page }) => {
+  const cy = () => page.getByTestId("view-target").evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue("--cy")));
+  const seen: Record<string, number> = {};
+  for (const [name, key] of [["handle", "ArrowDown"], ["rest", "ArrowUp"], ["mid", "ArrowUp"]] as const) {
+    const top = await toSnap(page, name, key);
+    await expect.poll(async () => (await floating(page)).size).toBe(name === "handle" ? "tall" : "normal");
+    const f = await floating(page);
+    expect(f.visible, name).toBe(true);
+    expect(f.inSheet, name).toBe(0);
+    expect(f.box!.y + f.box!.height, name).toBeLessThanOrEqual(top);
+    expect(top - (f.box!.y + f.box!.height), name).toBeLessThanOrEqual(16);
+    for (const label of RAIL) expect(overlap(f.box!, await box(page.locator(`button[aria-label="${label}"]`))), `${name}: ${label}`).toBe(false);
+    // the map band ends at the card: the cross-hair sits above it
+    await expect.poll(cy).toBeLessThan(f.box!.y);
+    seen[name] = f.strip;
+  }
+  expect(seen.handle).toBeGreaterThan(seen.rest + 30); // a taller strip where the map has the room
+  expect(seen.mid).toBe(seen.rest);
+
+  await toSnap(page, "full", "ArrowUp");
+  const full = await floating(page);
+  expect(full.visible).toBe(false);
+  expect(full.inSheet).toBe(0);
+  await expect(page.getByRole("slider", { name: "Forecast time" })).toHaveCount(0); // hidden for screen readers too
+  // and back as the sheet comes down
+  await page.getByRole("button", { name: "Collapse spots" }).click();
+  await expect(sheet(page)).toHaveAttribute("data-snap", "rest");
+  await expect(timelineCard(page)).toBeVisible();
+  await expect(page.getByRole("slider", { name: "Forecast time" })).toBeVisible();
+});
+
+test("phone (320×568): no room under the rail at rest or mid, so the timeline fades out there (never into the sheet); at the handle it floats, tall", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 });
-  const inline = page.locator("[data-inline-timeline]");
-  await expect(inline.getByRole("slider", { name: "Forecast time" })).toBeVisible();
-  await expect(inline.getByTestId("outlook")).toBeVisible();
-  await expect(page.getByRole("img", { name: /^Wind in view over the next week/ })).toHaveCount(0);
-  expect((await box(timelineCard(page))).height).toBeLessThanOrEqual(96);
-  // and the board starts right under it, its header on screen at rest
+  await settledTop(page);
+  const rest = await floating(page);
+  expect(rest.visible).toBe(false);
+  expect(rest.inSheet).toBe(0);
+  await expect(page.getByRole("slider", { name: "Forecast time" })).toHaveCount(0);
+  // the board's header on screen at rest
   await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeInViewport({ ratio: 1 });
+  // lowered to the handle: the whole map open, and the timeline back above the sheet, clear of the rail
+  const top = await toSnap(page, "handle", "ArrowDown");
+  await expect(timelineCard(page)).toBeVisible();
+  const f = await floating(page);
+  expect(f.size).toBe("tall");
+  expect(f.box!.y + f.box!.height).toBeLessThanOrEqual(top);
+  for (const label of RAIL) expect(overlap(f.box!, await box(page.locator(`button[aria-label="${label}"]`))), label).toBe(false);
+  await expect(page.getByRole("slider", { name: "Forecast time" })).toBeVisible();
+  // and gone again at mid
+  await toSnap(page, "rest", "ArrowUp");
+  await toSnap(page, "mid", "ArrowUp");
+  const mid = await floating(page);
+  expect(mid.visible).toBe(false);
+  expect(mid.inSheet).toBe(0);
 });
 
 test("phone: when the wind field fails, the sheet says so to screen readers and the timeline offers a retry", async ({ page }) => {
@@ -331,7 +394,7 @@ test("phone: swiped down from rest, the sheet is just its handle and the day's a
   const card = await box(timelineCard(page));
   expect(card.y + card.height).toBeLessThanOrEqual(handle);
   for (const label of RAIL) expect(overlap(card, await box(page.locator(`button[aria-label="${label}"]`))), label).toBe(false);
-  await expect.poll(cy).toBeGreaterThan(restCross + 100);
+  await expect.poll(cy).toBeGreaterThan(restCross + 80); // (the taller card at the handle keeps ~44 px of it)
   expect(await cy()).toBeLessThan(card.y);
 
   // a tap on the answer brings the board back at rest

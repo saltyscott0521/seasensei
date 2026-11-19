@@ -37,8 +37,8 @@ test("phone: bottom sheet, spot detail, timeline; nothing scrolls sideways", asy
 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
-  // every control the sheet exposes is thumb-sized
-  const tiny = await page.evaluate(() => [...document.querySelectorAll("[data-vaul-drawer] button")]
+  // every control the sheet exposes is thumb-sized (the sr-only briefing entry is for keyboards and screen readers only)
+  const tiny = await page.evaluate(() => [...document.querySelectorAll("[data-vaul-drawer] button:not(.sr-only)")]
     .filter((b) => { const r = b.getBoundingClientRect(); return r.width > 0 && (r.height < 32 || r.width < 32); }).map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim()));
   expect(tiny, `undersized controls in the sheet: ${JSON.stringify(tiny)}`).toEqual([]);
 });
@@ -115,7 +115,15 @@ test("phone: a short screen does not lay the timeline over the status pill or th
   // Markers stack on a narrow map, and the sheet aria-hides them; hit the button itself.
   await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click({ force: true });
   await expect(page.getByRole("button", { name: "Spot settings" })).toBeVisible();
-  const timeline = (await page.getByTestId("outlook").locator("xpath=ancestor::div[contains(@class,'glass')][1]").boundingBox())!;
+  // the spot opens at mid, where a 568px screen has no room under the rail: the timeline fades out (never into the sheet) …
+  const card = page.getByTestId("outlook").locator("xpath=ancestor::div[contains(@class,'glass')][1]");
+  await expect(card).toBeHidden();
+  // … and lowered to the handle it floats again, clear of the chrome
+  for (let i = 0; i < 2; i++) { await page.getByRole("button", { name: /^(Expand|Collapse) spots$/ }).focus(); await page.keyboard.press("ArrowDown"); }
+  await expect(page.locator("[data-vaul-drawer]")).toHaveAttribute("data-snap", "handle");
+  await expect(card).toBeVisible();
+  await page.waitForTimeout(700); // vaul's snap
+  const timeline = (await card.boundingBox())!;
   // The top chrome that replaced the legend: the status pill, the Add / Stations group and the map controls under it.
   for (const chrome of [page.getByTestId("status-pill"), page.getByTestId("control-rail"), page.locator('button[aria-label="Find my location"]')]) {
     const box = (await chrome.boundingBox())!;

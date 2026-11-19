@@ -88,7 +88,7 @@ export function StatusLine(props: StatusProps & { className?: string }) {
 export function StatusPill({ hidden, ...props }: StatusProps & { hidden?: boolean }) {
   return (
     <div data-testid="status-pill" data-map-chrome
-      className={clsx("glass pointer-events-auto flex h-[46px] max-w-[calc(100vw-96px)] items-center gap-2.5 rounded-lg py-1.5 pl-1.5 pr-3.5",
+      className={clsx("glass pointer-events-auto flex h-[46px] max-w-[calc(100vw-150px)] items-center gap-2.5 rounded-lg py-1.5 pl-1.5 pr-3.5",
         "transition-[opacity,visibility] duration-200 ease-ui", hidden && "invisible opacity-0")}>
       <BrandMark size={32} className="rounded-[9px]" />
       <div className="min-w-0 leading-tight">

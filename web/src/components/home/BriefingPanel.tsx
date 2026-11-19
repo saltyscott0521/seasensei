@@ -13,11 +13,10 @@ import { Segmented } from "../ui/Segmented";
 const MODES: [BriefingSettings["mode"], string][] = [["daily", "Every morning"], ["windy", "Only when it's on"]];
 
 /**
- * The morning briefing's settings, opened from the bell in the Today header (so it lives inside the phone sheet, where
- * it stays reachable): on/off, the time (in this device's zone), every morning or only when it's on, and what the next
+ * The morning briefing's settings, shown in the bell's popover (`BriefingBell.tsx`, outside the phone sheet): on/off, the time (in this device's zone), every morning or only when it's on, and what the next
  * one would say, written by the same engine the server sends it with. Permission is asked only on the switch's tap.
  */
-export function BriefingPanel({ id }: { id: string }) {
+export function BriefingPanel({ id, titleId = `${id}-h` }: { id: string; titleId?: string }) {
   const s = useBriefingSettings();
   const spots = useSpots();
   const model = usePrimaryModel();
@@ -33,9 +32,9 @@ export function BriefingPanel({ id }: { id: string }) {
   };
 
   return (
-    <section id={id} aria-labelledby={`${id}-h`} className="mt-3 rounded-lg border border-line bg-surface-2 px-4 py-3 md:mt-2">
-      <div className="flex items-center justify-between gap-3">
-        <h3 id={`${id}-h`} className="text-label font-semibold text-fg">Morning briefing</h3>
+    <section id={id} aria-labelledby={titleId} className="px-4 pb-3.5 pt-3">
+      <div className="flex items-center gap-3 pr-10">
+        <h3 id={titleId} className="flex-1 text-label font-semibold text-fg">Morning briefing</h3>
         {support === "ok" && <Switch on={s.on} busy={busy} onClick={toggle} label="Send me a morning briefing" />}
       </div>
       {support === "ios-install" ? (
@@ -88,7 +87,7 @@ function Preview({ settings }: { settings: BriefingSettings }) {
     <p className="mt-3 border-t border-line pt-2.5 text-caption text-fg-3">
       <span className="num text-fg-2">{fmtDay(at, tz, now)} {fmtClock(at, tz)}</span>
       {" · "}
-      {silent ? "Nothing would be sent: no session that day." : <><span className="text-fg-2">{b.title}</span>{" · "}{b.body.split("\n")[0]}</>}
+      {silent ? "Nothing would be sent: no session that day." : <><span className="text-fg-2">{b.title}</span>{" · "}{b.body.split("\n").filter((l) => !b.alert || l !== `${b.alert}.`).join(" · ")}</>}
     </p>
   );
 }

@@ -329,18 +329,20 @@ export function sample(g: WindGrid, lat: number, lon: number) {
 }
 
 /**
- * Wind speed → colour, a smooth gradient anchored to the ranges riders think in:
- * green holds through ~15–20 kn, purple ~20–30, red from ~30 (deepening past 40, red is the top).
- * Each colour is flat across the core of its range and blends into its neighbour near the edges.
+ * Wind speed → colour, a smooth gradient anchored to the ranges riders think in: light air is grey (dim to light, it
+ * "isn't wind yet"), green arrives through ~10–12 kn and holds ~15–18, blue ~20–24, violet ~26–30 and a deep vivid
+ * purple-magenta from ~35. Each colour is flat across the core of its range and blends into its neighbour near the
+ * edges. The green leans yellow (hue ~120°) so it never reads as the `go` verdict's emerald (#34d399, ~158°).
  */
 const STOPS: [number, [number, number, number]][] = [
-  [0, [100, 116, 139]],  // calm: slate
-  [6, [59, 130, 246]],   // blue
-  [11, [34, 211, 238]], [13, [34, 211, 238]], // cyan
-  [16, [34, 197, 94]], [19, [34, 197, 94]],   // 15–20: green
-  [22, [168, 85, 247]], [28, [168, 85, 247]], // 20–30: purple
-  [32, [239, 68, 68]], [38, [239, 68, 68]],   // 30–40: red
-  [44, [185, 28, 28]],                        // 40+: deep red
+  [0, [78, 86, 100]],                            // calm: dim grey
+  [4, [106, 114, 128]],
+  [8, [154, 161, 172]],                          // light grey
+  [11, [150, 206, 128]],                         // greening
+  [14, [92, 214, 84]], [18, [70, 196, 70]],      // 15–18: strong green
+  [21, [56, 142, 248]], [24, [72, 112, 252]],    // 20–24: blue
+  [26, [140, 92, 248]], [30, [168, 80, 244]],    // 26–30: violet
+  [35, [200, 48, 226]], [44, [226, 40, 196]],    // 35+: deep vivid purple-magenta
 ];
 
 const rgbAt = (kn: number): [number, number, number] => {

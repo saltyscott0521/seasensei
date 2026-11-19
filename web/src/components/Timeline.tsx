@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "motion/react";
+import { animate, AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
 import { Pause, Play, RotateCcw, Wind, WifiOff } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
@@ -9,7 +9,7 @@ import { compass, MODEL_INFO, windGradient, type Model } from "../lib/wind";
 import { fmtWhen, fmtWhenLong, hourOfDay, nightSpans } from "./charts/scale";
 import { Skeleton } from "./bits";
 import { Button, Chip, IconButton } from "./ui";
-import { WindStrip, type Area } from "./WindStrip";
+import { WindStrip, type Area, type StripSize } from "./WindStrip";
 
 const HOUR = 3600e3;
 const SCALE_MAX = 45; // windGradient() spans 0–45 kn
@@ -18,26 +18,36 @@ const SCALE_MAX = 45; // windGradient() spans 0–45 kn
  * Scrub the map through the week. One line of outlook (tap it to jump there), the week as a strip of wind (one bar per
  * hour: the strongest wind in view, in the map's colours, its height dramatic; dashed = your threshold) that is also the
  * slider (a framed hour; tap or drag anywhere on it, arrow keys on the frame), the hour and model, and the map's colour
- * scale. Index 0 is now. Slim on purpose: on phones the whole card stays within 132px.
+ * scale. Index 0 is now. Slim on purpose: on phones the whole card stays within 132px (176px when tall, at the handle snap).
  * Scrubbed (index > 0), the top line describes the chosen hour instead of the outlook from now.
  *
  * The outlook only ever points at daylight, in stretches of two hours or more, like the sessions on the board: a windy
  * night is not "wind on the way". The chip names the forecast the rider chose (`primary`); when that is SeaSensei, a
  * blend made per spot, the map's own wind comes from a single model, named as a detail ("wind map HRRR").
  *
- * `compact`: a short strip with no day names (the outlook line, the strip and its readout), for a timeline riding inside a
- * short phone's sheet.
+ * `size`: `compact` is a short strip with no day names (a short phone's resting sheet leaves little map); `tall` is a
+ * taller strip with bigger day names and a larger readout (the phone's handle snap, where the map has the room). A
+ * change of size crossfades the strip (opacity only) rather than snapping.
  * `failed`: the wind field could not load: a one-line "unavailable" card with Try again (`onRetry`). While loading, a
  * placeholder holds the card's place.
  * `where`: where the night shading is worked out for; defaults to the middle of your spots.
  */
-export const Timeline = memo(function Timeline({ hours, models, area, threshold, index, onIndex, playing, onPlaying, tz, failed, onRetry, where, compact, primary }: {
+export const Timeline = memo(function Timeline({ hours, models, area, threshold, index, onIndex, playing, onPlaying, tz, failed, onRetry, where, size = "normal", primary }: {
   hours: number[]; models: Model[]; area: Area[]; threshold: number; index: number; onIndex: (i: number) => void;
   /** The forecast the rider chose. Defaults to the map's own model for each hour. */
   primary?: Model;
   playing: boolean; onPlaying: (p: boolean) => void; tz: string; failed?: boolean; onRetry?: () => void;
-  where?: { lat: number; lon: number }; compact?: boolean;
+  where?: { lat: number; lon: number }; size?: StripSize;
 }) {
+  const compact = size === "compact", tall = size === "tall";
+  // A new size crossfades in (the strip's height changes with the snap; fading hides the jump).
+  const stripRef = useRef<HTMLDivElement>(null);
+  const shownSize = useRef(size);
+  useEffect(() => {
+    if (shownSize.current === size) return;
+    shownSize.current = size;
+    if (stripRef.current) animate(stripRef.current, { opacity: [0, 1] }, { duration: duration.base, ease });
+  }, [size]);
   const last = Math.max(0, hours.length - 1);
   const spots = useSpots();
 
@@ -104,7 +114,7 @@ export const Timeline = memo(function Timeline({ hours, models, area, threshold,
   const thumbRef = useRef<HTMLSpanElement>(null);
   const backToNow = useCallback(() => { seek(0); thumbRef.current?.focus(); }, [seek]);
 
-  if (hours.length < 2) return failed ? <TimelineFailed onRetry={onRetry} /> : <TimelinePlaceholder compact={compact} />;
+  if (hours.length < 2) return failed ? <TimelineFailed onRetry={onRetry} /> : <TimelinePlaceholder size={size} />;
 
   const t = hours[index];
   const a = area[index];
@@ -135,7 +145,7 @@ export const Timeline = memo(function Timeline({ hours, models, area, threshold,
     line?.kind === "none" ? "text-fg-2" : "text-fg");
 
   return (
-    <div className="glass rounded-xl px-3 pb-2 pt-2 md:px-3.5" data-compact={compact || undefined}>
+    <div className="glass rounded-xl px-3 pb-2 pt-2 md:px-3.5" data-size={size}>
       <div className="flex h-6 items-center gap-2">
         {line && line.kind !== "hour" ? (
           // On phones the button is 32px tall to the thumb, in the same 24px row.
@@ -158,11 +168,11 @@ export const Timeline = memo(function Timeline({ hours, models, area, threshold,
           {playing ? <Pause aria-hidden className="size-4" fill="currentColor" /> : <Play aria-hidden className="ml-0.5 size-4" fill="currentColor" />}
         </motion.button>
 
-        <div className="@container min-w-0 flex-1">
+        <div ref={stripRef} className="@container min-w-0 flex-1">
           <WindStrip area={area} index={index} threshold={threshold} nbmFrom={nbmFrom} days={days} nights={nights} onSeek={seek}
-            summary={summary} valueText={valueText} thumbRef={thumbRef} compact={compact} />
-          <div className="mt-0.5 flex h-4 items-center gap-3">
-            <span className="num min-w-0 flex-1 truncate text-micro text-fg-2">
+            summary={summary} valueText={valueText} thumbRef={thumbRef} size={size} />
+          <div className={clsx("mt-0.5 flex items-center gap-3", tall ? "h-5" : "h-4")}>
+            <span className={clsx("num min-w-0 flex-1 truncate text-fg-2", tall ? "text-caption" : "text-micro")}>
               <b data-testid="timeline-when" className="font-semibold text-fg">{label}</b>
               {a && <> · {knots(a)} kn<span className="@max-[240px]:hidden"> {compass(a.dir)}</span></>}
               {mapModel && <span data-testid="map-model" className="text-fg-3 @max-[330px]:hidden" title={`The wind drawn on the map is ${mapModel}'s. Your spots use SeaSensei.`}> · wind map {mapModel}</span>}
@@ -212,7 +222,8 @@ function Scale() {
 }
 
 /** Holds the card's place (same height) while the week loads, so nothing jumps when it arrives. */
-function TimelinePlaceholder({ compact }: { compact?: boolean }) {
+function TimelinePlaceholder({ size }: { size: StripSize }) {
+  const compact = size === "compact";
   return (
     <div className="glass rounded-xl px-3 pb-2 pt-2 md:px-3.5" aria-busy="true">
       <div className="flex h-6 items-center text-caption text-fg-3">Loading the week…</div>
@@ -220,7 +231,7 @@ function TimelinePlaceholder({ compact }: { compact?: boolean }) {
         <div className={clsx("grid shrink-0 place-items-center rounded-full bg-surface-3 text-fg-3", compact ? "size-9" : "size-10")}><Play aria-hidden className="ml-0.5 size-4" /></div>
         <div className="@container min-w-0 flex-1">
           {/* the strip's height: day names and bars, or the compact bars */}
-          <Skeleton className={clsx("rounded-sm", compact ? "h-5" : "h-14")} />
+          <Skeleton className={clsx("rounded-sm", compact ? "h-5" : size === "tall" ? "h-[100px]" : "h-14")} />
           <div className="mt-0.5 flex h-4 items-center justify-end"><Scale /></div>
         </div>
         <div className="size-9 shrink-0" />

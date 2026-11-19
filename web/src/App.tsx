@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useIsPresent } from "motion/react";
 import {
-  lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
+  lazy, Suspense, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type ReactNode,
 } from "react";
 import { Toaster } from "sonner";
@@ -12,6 +12,7 @@ import { AlertBanner } from "./components/shell/AlertBanner";
 import { MapActions, RailActions } from "./components/shell/MapActions";
 import { Panel } from "./components/shell/Panel";
 import { Sheet, sheetEscapes, type TimelinePlace } from "./components/shell/Sheet";
+import { BriefingBell, BriefingEntry, BriefingPopover } from "./components/home/BriefingBell";
 import { SheetSummary } from "./components/shell/SheetSummary";
 import { PanelBrand, status, StatusPill } from "./components/shell/Status";
 import { UpdateBoundary } from "./components/shell/UpdateBoundary";
@@ -23,7 +24,7 @@ import { useBriefingSync } from "./lib/briefingClient";
 import { useForecast, usePrimaryModel, useSpots, useWindField } from "./lib/data";
 import {
   bandPadding, CHROME_TOP, desktopBand, DESKTOP_NAV_W, DOCK_EST, EDGE, panelWidth, phoneBand, PILL_H, RAIL_H, sheetSnaps,
-  sheetTopPx, SNAP_FULL, SNAP_MID, SNAP_REST, TIMELINE_LIFT, timelineFloatsAt, useDesktop, useViewport, type SnapIndex,
+  sheetTopPx, SNAP_FULL, SNAP_MID, SNAP_REST, phoneTimeline, TIMELINE_GAP, TIMELINE_H, useDesktop, useViewport, type SnapIndex,
 } from "./lib/layout";
 import { useFreshness } from "./lib/freshness";
 import { duration, ease } from "./lib/motion";
@@ -128,9 +129,12 @@ export default function App() {
   const sheetTop = sheetTopPx(snaps[snap], vh);
   const [floatRef, cardH] = useHeight<HTMLDivElement>();
   const [dockRef, dockH] = useHeight<HTMLDivElement>();
-  // Room the floating timeline takes: its measured card, but never less than the agreed lift.
-  const lift = Math.max(TIMELINE_LIFT, cardH ? cardH + 8 : 0);
-  const place: TimelinePlace = adding ? "none" : snap === SNAP_FULL ? "hidden" : timelineFloatsAt(sheetTop, sat, lift) ? "float" : "inline";
+  // Phones: the timeline floats above the sheet at every snap where it fits (tall at the handle), else fades out.
+  const tl = phoneTimeline(snap, sheetTop, sat);
+  const place: TimelinePlace = adding ? "none" : tl.place;
+  // Room it takes: the size's agreed height, or its measured card if taller. Never less: a shorter card (the "unavailable"
+  // one) must not move the map band, or new bounds refetch the field and the card swaps back and forth.
+  const lift = Math.max(TIMELINE_H[tl.size], cardH) + TIMELINE_GAP;
   const b = desktop
     ? desktopBand({ vw, vh, dockH: adding ? 0 : dockH || DOCK_EST })
     : phoneBand({ vw, sat, sheetTop, timelineTop: place === "float" ? sheetTop - lift : null });
@@ -290,8 +294,8 @@ export default function App() {
   const timelineEl = useMemo(() => (
     <Timeline hours={timeline.hours} models={timeline.models} area={timeline.area} threshold={threshold}
       index={index} onIndex={onIndex} playing={playing} onPlaying={setPlaying} tz={tz}
-      failed={field.isError} onRetry={field.refetch} compact={place === "inline"} primary={primary} />
-  ), [timeline, threshold, index, onIndex, playing, tz, field.isError, field.refetch, place, primary]);
+      failed={field.isError} onRetry={field.refetch} size={desktop ? "normal" : tl.size} primary={primary} />
+  ), [timeline, threshold, index, onIndex, playing, tz, field.isError, field.refetch, desktop, tl.size, primary]);
 
   const map = useMemo(() => (
     <UpdateBoundary variant="quiet">
@@ -313,6 +317,17 @@ export default function App() {
   const [said, setSaid] = useState({ tone: st.tone, text: "" });
   if (said.tone !== st.tone) setSaid({ tone: st.tone, text: st.text });
 
+  // The morning briefing: one popover, opened from the bell (map chrome on phones, the panel header on desktop) or,
+  // on phones, its twin inside the sheet for keyboards and screen readers.
+  const [briefingOpen, setBriefingOpen] = useState(false);
+  const toggleBriefing = useCallback(() => setBriefingOpen((o) => !o), []);
+  const closeBriefing = useCallback(() => setBriefingOpen(false), []);
+  const briefingId = useId();
+  const bellProps = { open: briefingOpen, onToggle: toggleBriefing, panelId: briefingId };
+  const popoverStyle: CSSProperties = desktop
+    ? { top: EDGE, left: EDGE + panelWidth(vw) + 12, width: 360 }
+    : { top: sat + CHROME_TOP + PILL_H + 8, left: 12, width: Math.min(400, vw - 24) };
+
   const actions = { adding, onAdd: startAdd, onCancelAdd: close, showStations, onToggleStations: toggleStations, onPrefetchAdd: prefetchAdd };
 
   // Desktop timeline dock: centred on the open map, up to 760px wide, clear of the locate / zoom column.
@@ -328,7 +343,7 @@ export default function App() {
             timeline rather than walking every map marker first. */}
         {desktop && (
           <>
-            <Panel header={<PanelBrand {...statusProps} />} scrollRef={scrollRef} onScroll={onScroll} scrolled={scrolled}>{alertEl}{panel}</Panel>
+            <Panel header={<div className="flex items-center justify-between gap-3"><PanelBrand {...statusProps} /><BriefingBell variant="panel" {...bellProps} /></div>} scrollRef={scrollRef} onScroll={onScroll} scrolled={scrolled}>{alertEl}{panel}</Panel>
             {!adding && <div ref={dockRef} className="absolute bottom-4 z-10" style={{ left: dockLeft, width: dockW }}>{timelineEl}</div>}
             <div className="absolute right-4 top-4 z-10">
               <MapActions {...actions} />
@@ -351,7 +366,10 @@ export default function App() {
             <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 bg-ink/80 transition-opacity duration-300 ease-ui motion-reduce:transition-none"
               style={{ height: Math.max(0, sheetTop) + 32, opacity: snap === SNAP_FULL ? 1 : 0 }} />
             <div className="pointer-events-none absolute inset-x-3 flex items-start justify-between gap-3" style={{ top: sat + CHROME_TOP }}>
-              <StatusPill {...statusProps} hidden={pillHidden} />
+              <div className="flex min-w-0 items-start gap-2">
+                <StatusPill {...statusProps} hidden={pillHidden} />
+                <BriefingBell variant="map" {...bellProps} hidden={pillHidden} />
+              </div>
               <RailActions {...actions} hidden={railHidden} />
             </div>
           </>
@@ -359,11 +377,14 @@ export default function App() {
 
         {!desktop && (
           <Sheet snaps={snaps} index={snap} onIndex={setSnap} timeline={timelineEl} place={place}
-            scrollRef={scrollRef} onScroll={onScroll} floatRef={floatRef} status={said.text} summary={summaryEl}>
+            scrollRef={scrollRef} onScroll={onScroll} floatRef={floatRef} status={said.text} summary={summaryEl}
+            briefing={<BriefingEntry {...bellProps} />}>
             {alertEl}
             {panel}
           </Sheet>
         )}
+
+        <BriefingPopover open={briefingOpen} onClose={closeBriefing} panelId={briefingId} style={popoverStyle} />
 
         {dialogUsed && (
           <UpdateBoundary variant="overlay" open={discussion != null} onClose={close}>

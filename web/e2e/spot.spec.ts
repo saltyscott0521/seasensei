@@ -97,7 +97,7 @@ test("the hour grid is a real table from now: each hour says its answer, night s
   await expect(three.cell).toHaveAccessibleName(/, night$/);
   const go = table.locator('td[data-ride="go"]');
   expect(await go.count()).toBeGreaterThanOrEqual(2);
-  await expect(go.first()).toHaveAccessibleName(/^\d+ (AM|PM): \d+ kn.*, rideable$/);
+  await expect(go.first()).toHaveAccessibleName(/^(\d+ (AM|PM)|Now): \d+ kn.*, rideable$/); // "Now" while a session is on
   const t0 = Number(await go.first().getAttribute("data-t"));
   await expect(table.locator(`th[data-t="${t0}"]`)).not.toHaveAttribute("data-night");
   await expect(table.locator(`td[data-t="${t0 + 3600e3}"]`)).toHaveAttribute("data-ride", "go");
@@ -413,4 +413,41 @@ test("where the coast can tell, the wind is named against the shore, and offshor
   }
   await expect(panel.getByTestId("offshore-note")).toContainText("Offshore: wind blows out to sea");
   await expect(page.getByTestId("week-strip").getByRole("button").nth(2)).toHaveAccessibleName(/, offshore\. Show that day$/);
+});
+
+/** "rgb(…)" / "rgba(…)" / "#rrggbb" → hue (0–360) and saturation (0–1), HSL. */
+const hsl = (css: string) => {
+  const [r, g, b] = (css.startsWith("#") ? css.slice(1).match(/../g)!.map((h) => parseInt(h, 16)) : css.match(/[\d.]+/g)!.slice(0, 3).map(Number)).map((v) => v / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min, l = (max + min) / 2;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  const h = d === 0 ? 0 : max === r ? 60 * (((g - b) / d) % 6) : max === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
+  return { h: (h + 360) % 360, s };
+};
+
+test("the wind scale runs grey → green → blue → purple, its green apart from the 'go' verdict's, and the hour grid wears it", async ({ page }) => {
+  const scale = await page.evaluate(async () => {
+    const m = await import(/* @vite-ignore */ ("/src/lib/wind.ts" as string));
+    return [5, 15, 22, 30, 40].map((kn) => m.windColor(kn) as string);
+  });
+  const [k5, k15, k22, k30, k40] = scale.map(hsl);
+  expect(k5.s).toBeLessThan(0.15);                         // light air: grey
+  expect(k15.h).toBeGreaterThanOrEqual(95); expect(k15.h).toBeLessThanOrEqual(140);   // green
+  expect(k22.h).toBeGreaterThanOrEqual(205); expect(k22.h).toBeLessThanOrEqual(240);  // blue
+  expect(k30.h).toBeGreaterThanOrEqual(255); expect(k30.h).toBeLessThanOrEqual(300);  // purple
+  expect(k40.h).toBeGreaterThanOrEqual(280); expect(k40.h).toBeLessThanOrEqual(325);  // deep purple-magenta
+  for (const k of [k15, k22, k30, k40]) expect(k.s).toBeGreaterThan(0.5);
+  const go = hsl((await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--color-go"))).trim());
+  expect(Math.abs(go.h - k15.h)).toBeGreaterThanOrEqual(25); // the scale's green never passes for "rideable"
+
+  // the hour grid: 21–24 kn bars are blue, 26+ kn gust cells purple
+  await page.locator("aside").getByRole("button", { name: /Fort De Soto/ }).first().click();
+  const table = hourTable(page);
+  await expect(table).toBeVisible();
+  const cells = await table.evaluate((el) => [...el.querySelectorAll<HTMLElement>("[data-bar], td span.num")]
+    .map((c) => ({ kn: Number(c.textContent), bg: getComputedStyle(c).backgroundColor })).filter((c) => c.kn > 0 && c.bg !== "rgba(0, 0, 0, 0)"));
+  const blue = cells.filter((c) => c.kn >= 21 && c.kn <= 24), purple = cells.filter((c) => c.kn >= 26 && c.kn <= 32);
+  expect(blue.length).toBeGreaterThan(0);
+  expect(purple.length).toBeGreaterThan(0);
+  for (const c of blue) expect(hsl(c.bg).h, `${c.kn} kn`).toBeGreaterThanOrEqual(205);
+  for (const c of purple) expect(hsl(c.bg).h, `${c.kn} kn`).toBeGreaterThanOrEqual(250);
 });

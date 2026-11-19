@@ -26,7 +26,9 @@ Software WebGL makes runs slow: use `--trace off --workers=2`. Don't edit `src/`
 - **Design system** (`src/styles/theme.css`, `src/components/ui/`): "night sea" tokens as Tailwind 4 `@theme static` utilities —
   surfaces (`bg-surface-1/2/3`), text (`text-fg`, `-fg-2`, `-fg-3`: the faintest allowed), `accent`, verdict colours
   (`go`, `soon`, `off`, `strong`, `wrongdir`), radii, type sizes (`text-micro` … `text-display`). Colour is data: chrome is neutral;
-  only the wind scale, verdicts and the accent carry colour. Use the primitives (Button, IconButton, Chip, Card, Segmented,
+  only the wind scale, verdicts and the accent carry colour. The wind scale (`windColor`/`windGradient`/`windStops` in `lib/wind.ts`, used by
+  everything: particles, markers, strip, hour grid, charts, legend) runs grey (0–8 kn) → green (~12–18) → blue (~20–24) → violet (~26–30)
+  → deep purple-magenta (35+); its green leans yellow so it never reads as the emerald `go` (`spot.spec.ts` checks the hues). Use the primitives (Button, IconButton, Chip, Card, Segmented,
   VerdictPill, ConfidenceDots, Ribbon, …) instead of ad-hoc `text-white/NN`. `.num` is Geist with tabular figures (no mono).
 - **Motion** (`src/lib/motion.ts`): duration/spring/ease tokens; `<MotionConfig reducedMotion="user">` wraps the app. Animate
   opacity/transform only, never `x` inside a scroll container; charts draw in once; rotations take the shortest path.
@@ -41,9 +43,12 @@ Software WebGL makes runs slow: use `--trace off --workers=2`. Don't edit `src/`
 - **One clock** (`src/lib/time.tsx`): the timeline's chosen hour is `useAt()` (null = now); map, cards, hero, hour grid and chart
   cursors all follow it. Anything may ask for an hour with `requestAt(t)`; the shell listens with `onAtRequest`.
 - **Shell** (`App.tsx`, `components/shell/`, `lib/layout.ts`): desktop = docked glass panel + timeline dock; phones = status pill,
-  one control rail (Add a spot, Stations, Find my location — no zoom buttons, pinch zooms), the vaul sheet (handle 80 px — the grabber and the day's answer in one line,
+  with the morning briefing's bell beside it, one control rail (Add a spot, Stations, Find my location — no zoom buttons, pinch zooms), the vaul sheet (handle 80 px — the grabber and the day's answer in one line,
   `shell/SheetSummary.tsx` — / rest 320 px / mid / full, all in px and strictly rising; the app opens at rest; a grabber button, its
-  arrow keys move a snap; `data-snap` is the snap's name) with the timeline floating above it (a compact one-line timeline inside the sheet where it can't float).
+  arrow keys move a snap; `data-snap` is the snap's name) with the timeline always floating above its top edge, never in its content
+  (`phoneTimeline()` in `layout.ts`: `tall` — a taller strip — at the handle, `normal` at rest/mid, `compact` where only that fits under the
+  rail; where nothing fits, and at full, it fades out; on 320×568 that is rest and mid). The card's DOM is inside the sheet (vaul), positioned
+  `bottom-full`; the band reserves `max(TIMELINE_H[size], measured)` so a shorter card never moves the map (it would refetch the field).
   One "visible map band" calculation drives the map padding and the cross-hair. Layers (spot, add, discussion) live in history:
   `?spot=`, `?add=1`, `?discussion=`; full-screen charts and spot settings push their own entries; back/Escape close the top one.
   The chosen timeline hour is kept as a time (not an index) and consumers read a deferred copy, so scrubbing stays light.
@@ -125,15 +130,17 @@ calls and ~2 MB a day. Off unless `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRE
 (`R2_ENDPOINT`/`R2_PREFIX`/`ARCHIVE_BOX` override). Status: `/api/archive`. Signed with `aws4fetch`. Tested in `e2e/server.spec.ts`.
 
 ## Morning briefing (Web Push)
-A notification at the rider's chosen time (default 7:00, their device's zone): "Fort De Soto · On at 1 PM" / "1–5 PM · 15–21 kn SW ·
-Likely. Also Picnic Island 3–5 PM (Possible)." or "No session today" / "Next: Sat 11 AM at Skyway (Possible).", plus a marine alert line.
+A notification at the rider's chosen time (default 7:00, their device's zone): "Fort De Soto · On at 1 PM" / "Morning 5–10 kn E ·
+Afternoon 10–15 kn ESE, gusts 19" (the featured spot's day, `dayShape()`: sunrise–noon / noon–sunset from the send time on, speed range,
+speed-weighted direction, gusts when ≥ 4 kn over the top) then "1–5 PM · 15–21 kn SW · Likely. Also Picnic Island 3–5 PM (Possible)." (the
+"Also" is dropped when the body would pass 170 characters, iOS's collapsed view) or "No session today" / "Next: Sat 11 AM at Skyway (Possible).", plus a marine alert line.
 Modes: every morning, or only when it's on. A tap opens `/?spot=<id>` (or `/`).
 - **One engine**: `src/lib/briefing.ts` (pure) composes it from `sessions()`/`verdict()`/`rankSpots()`; `scripts/build-engine.mjs` (esbuild, on
   `prebuild`, and in `server.spec.ts`) bundles it with session/sensei/wind/`forecast.ts` (`forecastFrom`)/`marine.ts` (pure alert parsing)
   into `server/engine.mjs` (gitignored; the Dockerfile copies it from the build stage). It fails if anything outside `src/lib/` sneaks in.
   The panel's preview uses the same function. Without `engine.mjs` the server runs with push off.
 - **Server**: `server/push.mjs` (VAPID keys, subscriptions, validation, sending via web-push's `generateRequestDetails` + fetch) and
-  `server/briefing.mjs` (cycle every 5 min; due when the local time has passed by ≤ 2 h and today isn't sent; the app's two Open-Meteo
+  `server/briefing.mjs` (cycle every minute, reading only the in-memory subscription list; due when the local time has passed by ≤ 2 h and today isn't sent; the app's two Open-Meteo
   requests per place, shared by rounded lat/lon, cached 30 min; calibration = what `/api/calibration` serves; no nowcast; alerts for the
   featured spot; TTL 3 h, topic `morning-briefing`; today marked only after a 2xx; 404/410 deletes). A newly turned-on briefing whose time
   passed < 2 h ago sends at once. "Only when it's on" on a calm day records the day as skipped.
@@ -145,7 +152,9 @@ Modes: every morning, or only when it's on. A tap opens `/?spot=<id>` (or `/`).
   services' https endpoints: FCM, Mozilla, Windows, Apple — the server POSTs to them, so never loosen this), `POST /api/push/unsubscribe`,
   `GET /api/push/status` (counts and Open-Meteo calls only). Admin: `POST /api/push/send-now[?endpoint=…][&dry=1]` with
   `Authorization: Bearer $DISCUSSION_ADMIN_TOKEN`; dry returns the briefing JSON; a real send doesn't count as today's.
-- **Client**: bell in `home/TodayHeader.tsx` → `home/BriefingPanel.tsx` (inside the phone sheet); `lib/briefingClient.ts` keeps settings in
+- **Client**: `home/BriefingBell.tsx`: the bell (phones: beside the status pill; desktop: the panel header) opens `BriefingPopover`, a
+  non-modal popover over the map (portalled to body, so vaul doesn't hide it) holding `home/BriefingPanel.tsx`; on phones the sheet carries
+  `BriefingEntry`, an sr-only twin, for keyboards and screen readers (the map bell is aria-hidden there); `lib/briefingClient.ts` keeps settings in
   localStorage `morningBriefing`, asks permission only on the switch's tap, and `useBriefingSync()` (App) re-posts 1.5 s after spots/model/
   time/mode change and once per load. `public/sw.js` has `push` and `notificationclick` (caching rules unchanged). iOS needs the Home Screen app.
 - e2e: `briefing.spec.ts`, `briefing-phone.spec.ts` (`fakePush()` and `pushRequests()` in `mocks.ts`); server side in `server.spec.ts`.
@@ -156,7 +165,9 @@ Modes: every morning, or only when it's on. A tap opens `/?spot=<id>` (or `/`).
 - MapLibre 6 finds its worker via `import.meta.url`, which breaks once bundled. `scripts/copy-maplibre-worker.mjs`
   runs on `predev`/`prebuild`; the server must serve `.mjs` as JavaScript (it does, in `server.mjs`'s type table).
 - Vaul's bottom sheet marks everything outside it `aria-hidden`. Anything that must stay reachable on phones
-  (the timeline, the in-sheet "New spot" button) has to render inside the sheet; the map rail is pointer-only on phones.
+  (the timeline, the in-sheet "New spot" button, the briefing's entry) has to render inside the sheet (or portal in after it opened, like
+  the dialogs); the map rail and bell are pointer-only on phones. "Morning briefing" is a substring-unique button name: don't name another
+  button "… morning briefing".
 - Playwright strict mode: several tests rely on unique names/texts (`Add a spot`, `Forecast model` once per view, the two
   "Read the full …" buttons, `40+ kn`, `.maplibregl-marker` count = spots + live stations). Keep them unique.
 - `public/sw.js` caches only `/assets/*` and `/maplibre/*` (cache-first, never HTML) and treats navigations network-first with
