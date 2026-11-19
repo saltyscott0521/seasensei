@@ -1037,7 +1037,8 @@ test("each due subscription gets one briefing a day at its local time; 'only whe
     expect(sent.headers.authorization).toMatch(new RegExp(`^vapid t=[\\w-]+\\.[\\w-]+\\.[\\w-]+, k=${key}$`));
     const msg = rider.read(sent.body);
     expect(msg).toMatchObject({ title: "Fort De Soto · On at 12 PM", url: "/?spot=seed-fort-de-soto", tag: "morning-briefing" });
-    expect(msg.body).toMatch(/^12–4 PM · \d+–\d+ kn SW · Likely\.$/);
+    // the shape of the day first (5 kn E all morning; 20 kn SW noon to 4 PM, its gusts 1.3×), then the session
+    expect(msg.body).toMatch(/^Morning 5 kn E · Afternoon 5–20 kn SW, gusts 26\n12–4 PM · \d+–\d+ kn SW · Likely\.$/);
 
     const st = await pushStatus(app.base);
     expect(st).toMatchObject({ subscribers: 3, sent: 1, pruned: 1, skipped: 1, failed: 0 });
@@ -1079,7 +1080,8 @@ test("the admin dry run shows the briefing the app's engine writes: spot, time, 
     expect(dry.results[0].wouldSend).toBe(true);
     expect(b.title).toBe("Fort De Soto · On at 12 PM");
     // 20 kn from every model, the plain seed's range (−2.4/+2.6 kn at short lead): 18–23 kn
-    expect(b.body).toBe("12–4 PM · 18–23 kn SW · Likely. Also Picnic Island 2–4 PM (Possible).\nSmall Craft Advisory until 10 PM.");
+    expect(b.body).toBe("Morning 5 kn E · Afternoon 5–20 kn SW, gusts 26\n12–4 PM · 18–23 kn SW · Likely. Also Picnic Island 2–4 PM (Possible).\nSmall Craft Advisory until 10 PM.");
+    expect(b.body.length).toBeLessThanOrEqual(170); // iOS shows it whole, collapsed
     expect(b.url).toBe("/?spot=seed-fort-de-soto");
     expect(b.spots.map((s: any) => [s.id, s.state])).toEqual([["seed-fort-de-soto", "today"], ["pi", "today"], ["calm", "none"]]);
     expect(stubs.pushes).toHaveLength(0); // a dry run sends nothing
@@ -1087,7 +1089,7 @@ test("the admin dry run shows the briefing the app's engine writes: spot, time, 
     // a raw model leads: the board's raw-model copy (mean to peak, no chance word)
     expect((await post(app.base, "/api/push/subscribe", { subscription: rider.subscription, spots: [spots[2]], time: "07:00", timeZone: place.tz, model: "gfs" })).status).toBe(200);
     const raw = (await (await post(app.base, "/api/push/send-now?dry=1", {}, auth)).json()).results[0].briefing;
-    expect(raw.body).toBe("12–4 PM · 20 kn SW.\nSmall Craft Advisory until 10 PM.");
+    expect(raw.body).toBe("Morning 5 kn E · Afternoon 5–20 kn SW, gusts 26\n12–4 PM · 20 kn SW.\nSmall Craft Advisory until 10 PM.");
 
     // a calm week: the next session elsewhere, else nothing this week
     stubs.spotWind = (lat, _lon, t) => (lat === 27.853 && t >= place.at(24 + 24 + 11) && t < place.at(24 + 24 + 14) ? { speed: 22, dir: 225 } : null);
@@ -1102,7 +1104,7 @@ test("the admin dry run shows the briefing the app's engine writes: spot, time, 
     const day = new Intl.DateTimeFormat("en-US", { timeZone: place.tz, weekday: "short" }).format(place.at(48 + 11));
     const res = await (await post(next.base, "/api/push/send-now?dry=1", {}, { authorization: "Bearer s3cret" })).json();
     expect(res.results[0].briefing).toMatchObject({ title: "No session today", url: "/?spot=pi", on: false });
-    expect(res.results[0].briefing.body).toMatch(new RegExp(`^Next: ${day} 11 AM at Picnic Island \\((Likely|Possible)\\)\\.$`));
+    expect(res.results[0].briefing.body).toMatch(new RegExp(`^Morning 5 kn E · Afternoon 5 kn E\\nNext: ${day} 11 AM at Picnic Island \\((Likely|Possible)\\)\\.$`));
     // not a dry run: it goes out now, and doesn't count as today's
     const sent = await (await post(next.base, "/api/push/send-now", {}, { authorization: "Bearer s3cret" })).json();
     expect(sent.results[0].status).toBe(201);

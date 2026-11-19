@@ -3,8 +3,8 @@
 // sensei.ts, wind.ts, forecast.ts and marine.ts, into server/engine.mjs, so the push the server sends says exactly
 // what the board says.
 import { fmtUntil, type MarineAlert } from "./marine";
-import { chanceOf, fmtHour, fmtSpan, fmtStrength, fmtWeekday, rankSpots, sameDay, sessions, verdict, type Session, type Verdict } from "./session";
-import type { Forecast, Spot } from "./wind";
+import { chanceOf, fmtHour, fmtSpan, fmtStrength, fmtWeekday, rankSpots, sameDay, sessions, sunTimes, verdict, type Session, type Verdict } from "./session";
+import { compass, type Forecast, type Hour, type Spot } from "./wind";
 
 export { forecastFrom } from "./forecast";
 export { alertsUrl, parseAlerts, type MarineAlert } from "./marine";
@@ -19,7 +19,11 @@ export type BriefingMode = "daily" | "windy";
 export type Briefing = {
   /** "Fort De Soto · On at 1 PM" · "No session today" */
   title: string;
-  /** "1–5 PM · 15–21 kn SW · Likely. Also Picnic Island 3–5 PM (Possible)." (+ a marine alert on its own line) */
+  /**
+   * "Morning 5–10 kn E · Afternoon 10–15 kn ESE, gusts 19" (the featured spot's day), then "1–5 PM · 15–21 kn SW ·
+   * Likely. Also Picnic Island 3–5 PM (Possible)." (+ a marine alert on its own line). At most BODY_MAX characters
+   * when it can be (the "Also …" goes first).
+   */
   body: string;
   /** Where a tap goes: the featured spot, else the board. */
   url: string;
@@ -37,6 +41,33 @@ export type Briefing = {
 export const fmtAlert = (a: Pick<MarineAlert, "event" | "ends">, tz: string, now = Date.now()) =>
   a.ends != null ? `${a.event} ${fmtUntil(a.ends, tz, now).replace(/^Until/, "until")}` : a.event;
 
+/** iOS shows about this much of a notification's body collapsed. */
+export const BODY_MAX = 170;
+const RAD = Math.PI / 180;
+
+/**
+ * The shape of the day at a spot: "Morning 5–10 kn E · Afternoon 10–15 kn ESE, gusts 19". Morning is sunrise to noon,
+ * afternoon noon to sunset, in the spot's zone, from `now` on (a late send shows only what is left). Each half: the
+ * range of the hourly speeds in whole knots, the speed-weighted mean direction; the afternoon adds its peak gust when
+ * that is 4 kn or more over the range's top. Null when no daylight is left today.
+ */
+export function dayShape(hours: Hour[], at: { lat: number; lon: number }, tz: string, now: number): string | null {
+  const { sunrise, sunset } = sunTimes(at.lat, at.lon, now);
+  const today = hours.filter((h) => h.t + HOUR > Math.max(now, sunrise) && h.t < sunset && sameDay(h.t, now, tz));
+  const half = (name: string, hs: Hour[], gusts: boolean) => {
+    if (!hs.length) return null;
+    const sp = hs.map((h) => Math.round(h.speed));
+    const lo = Math.min(...sp), hi = Math.max(...sp);
+    const u = hs.reduce((a, h) => a + h.speed * Math.sin(h.dir * RAD), 0), v = hs.reduce((a, h) => a + h.speed * Math.cos(h.dir * RAD), 0);
+    const dir = compass((Math.atan2(u, v) / RAD + 360) % 360);
+    const gust = Math.round(Math.max(...hs.map((h) => h.gust ?? 0)));
+    return `${name} ${lo === hi ? lo : `${lo}–${hi}`} kn ${dir}${gusts && gust - hi >= 4 ? `, gusts ${gust}` : ""}`;
+  };
+  const am = today.filter((h) => localClock(h.t, tz).minutes < 720), pm = today.filter((h) => localClock(h.t, tz).minutes >= 720);
+  const line = [half("Morning", am, false), half("Afternoon", pm, true)].filter(Boolean).join(" · ");
+  return line || null;
+}
+
 const chanceTag = (s: Session) => { const c = chanceOf(s); return c ? ` (${c})` : ""; };
 const span = (s: Session, tz: string) => fmtSpan(s.start, s.end + HOUR, tz);
 
@@ -50,14 +81,14 @@ export function composeBriefing(spots: BriefingSpot[], forecasts: (Forecast | nu
     const fc = forecasts[i];
     if (!fc?.hours.length) return [];
     const list = sessions(fc.hours, spot, { from: now });
-    return [{ spot, tz: fc.timeZone, verdict: verdict(spot, fc.hours, list, now, fc.timeZone) as Verdict | null }];
+    return [{ spot, tz: fc.timeZone, hours: fc.hours, verdict: verdict(spot, fc.hours, list, now, fc.timeZone) as Verdict | null }];
   });
   if (!rows.length) return null;
   const ranked = rankSpots(rows);
   const best = ranked[0], tz = best.tz, v = best.verdict!;
   const today = ranked.filter((r) => (r.verdict!.state === "on" || r.verdict!.state === "today") && r.verdict!.session);
   const alertLine = alert ? fmtAlert(alert, tz, now) : null;
-  let title: string, body: string, featured: typeof best | null;
+  let title: string, body: string, also = "", featured: typeof best | null;
 
   if (today.length) {
     featured = today[0];
@@ -65,7 +96,8 @@ export function composeBriefing(spots: BriefingSpot[], forecasts: (Forecast | nu
     const chance = chanceOf(s);
     const others = today.slice(1, 3).map((r) => `${r.spot.name} ${span(r.verdict!.session!, r.tz)}${chanceTag(r.verdict!.session!)}`);
     title = `${featured.spot.name} · ${featured.verdict!.label}`;
-    body = `${[span(s, featured.tz), fmtStrength(s), chance].filter(Boolean).join(" · ")}.${others.length ? ` Also ${others.join(", ")}.` : ""}`;
+    body = `${[span(s, featured.tz), fmtStrength(s), chance].filter(Boolean).join(" · ")}.`;
+    if (others.length) also = ` Also ${others.join(", ")}.`;
   } else {
     const next = ranked.find((r) => r.verdict!.state === "upcoming" && r.verdict!.session);
     featured = next ?? null;
@@ -78,7 +110,10 @@ export function composeBriefing(spots: BriefingSpot[], forecasts: (Forecast | nu
       body = v.best ? `Nothing rideable in the forecast this week (best ${v.detail.replace(/^best /, "")}).` : "Nothing rideable in the forecast this week.";
     }
   }
-  if (alertLine) body += `\n${alertLine}.`;
+  const shaped = featured ?? best;
+  const shape = dayShape(shaped.hours, shaped.spot, shaped.tz, now);
+  const join = (withAlso: boolean) => [shape, body + (withAlso ? also : ""), alertLine && `${alertLine}.`].filter(Boolean).join("\n");
+  body = join(!!also && join(true).length <= BODY_MAX);
   return {
     title, body, url: featured ? `/?spot=${encodeURIComponent(featured.spot.id)}` : "/", spotId: featured?.spot.id ?? null,
     on: today.length > 0, alert: alertLine,

@@ -18,7 +18,9 @@ catch (e) { console.error(`[briefing] off: server/engine.mjs is missing or broke
 const OPENMETEO = () => (process.env.OPENMETEO_BASE ?? "https://api.open-meteo.com").replace(/\/$/, "");
 const NWS = () => (process.env.NWS_BASE ?? "https://api.weather.gov").replace(/\/$/, "");
 const UA = "SeaSensei morning briefing (seasensei.com)";
-const CHECK_MS = Number(process.env.BRIEFING_CHECK_MS ?? 5 * 60_000);
+// Every minute, so a 7:30 briefing goes at 7:30, not 7:33. Cheap: the subscriptions live in memory (listed from the store
+// once, kept current by subscribe/unsubscribe), so a cycle reads nothing from R2 and fetches forecasts only when one is due.
+const CHECK_MS = Number(process.env.BRIEFING_CHECK_MS ?? 60_000);
 const BOOT_MS = Number(process.env.BRIEFING_BOOT_DELAY_MS ?? 60_000);
 const STALE_MIN = Number(process.env.BRIEFING_STALE_MINUTES ?? 120);
 const FORECAST_TTL = 30 * 60_000, PARTIAL_TTL = 5 * 60_000, ALERT_TTL = 10 * 60_000;
