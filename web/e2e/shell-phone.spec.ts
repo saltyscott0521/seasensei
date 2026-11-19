@@ -17,6 +17,12 @@ const overlap = (a: { x: number; y: number; width: number; height: number }, b: 
 const sheetTop = async (page: Page) => Math.round((await box(sheet(page))).y);
 /** The sheet's top edge once it has settled (the same for three reads, longer than vaul's 0.5 s snap). */
 const settledTop = async (page: Page) => {
+  // Vaul writes the snap's transform at once; the drawn one catches up on the next frames, which a software-WebGL map
+  // re-framing to the new band can hold back for a while. Wait for them to agree first.
+  await expect.poll(() => sheet(page).evaluate((el) => {
+    const s = (el as HTMLElement).style.transform.match(/translate3d\([^,]+,\s*(-?[\d.]+)px/);
+    return !s || Math.abs(new DOMMatrix(getComputedStyle(el).transform).m42 - parseFloat(s[1])) < 1;
+  }), { timeout: 20_000 }).toBe(true);
   const seen: number[] = [];
   await expect.poll(async () => { seen.push(await sheetTop(page)); return seen.length >= 3 && seen.slice(-3).every((y) => y === seen.at(-1)); },
     { intervals: [250] }).toBe(true);
@@ -176,12 +182,12 @@ test("phone: at rest, focus that lands below the fold raises the sheet; back at 
   // what a screen reader's cursor (or find-in-page) does: focus something the resting sheet clips
   const read = page.getByRole("button", { name: "Read the full wind discussion" });
   await read.evaluate((el: HTMLElement) => el.focus());
-  await expect(sheet(page)).toHaveAttribute("data-snap", "2");
+  await expect(sheet(page)).toHaveAttribute("data-snap", "full");
   await expect(read).toBeInViewport();
   const collapse = page.getByRole("button", { name: "Collapse spots" });
   await expect(collapse).toHaveAttribute("aria-expanded", "true");
   await collapse.click();
-  await expect(sheet(page)).toHaveAttribute("data-snap", "0");
+  await expect(sheet(page)).toHaveAttribute("data-snap", "rest");
   await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeInViewport();
   expect(await sheet(page).locator(".sheet-scroll").evaluate((el) => el.scrollTop)).toBe(0);
 });
@@ -246,24 +252,38 @@ test.describe("with motion", () => {
     await expect.poll(running).toBe(true);
     await page.getByRole("button", { name: "Expand spots" }).click();
     await page.getByRole("button", { name: "Expand spots" }).click();
-    await expect(sheet(page)).toHaveAttribute("data-snap", "2");
+    await expect(sheet(page)).toHaveAttribute("data-snap", "full");
     await expect.poll(running).toBe(false);
     await page.getByRole("button", { name: "Collapse spots" }).click();
     await expect.poll(running).toBe(true);
   });
 });
 
-for (const size of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { width: 390, height: 664 }, { width: 412, height: 839 }]) {
-  test(`phone (${size.width}×${size.height}): the sheet's snaps rise in order — rest, mid, full — and a spot opens at mid, above rest`, async ({ page }) => {
+for (const size of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { width: 390, height: 664 }, { width: 390, height: 844 }, { width: 412, height: 839 }]) {
+  test(`phone (${size.width}×${size.height}): the sheet's snaps rise in order — handle, rest, mid, full — and a spot opens at mid, above rest`, async ({ page }) => {
     await page.setViewportSize(size);
     const rest = await settledTop(page);
+    await expect(sheet(page)).toHaveAttribute("data-snap", "rest"); // the app opens at rest, not collapsed
+    // below rest: just the handle and the day's answer (the grabber's arrow keys move it a snap at a time)
+    await page.getByRole("button", { name: "Expand spots" }).focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(sheet(page)).toHaveAttribute("data-snap", "handle");
+    const handle = await settledTop(page);
+    expect(handle, "the handle sits well under rest").toBeGreaterThan(rest + 150);
+    expect(size.height - handle, "about 80px of sheet: the grabber and one line").toBeGreaterThanOrEqual(76);
+    expect(size.height - handle).toBeLessThanOrEqual(84);
+    await expect(page.getByTestId("sheet-summary")).toBeInViewport({ ratio: 1 });
+    // a tap on the grabber goes back up to rest
     await page.getByRole("button", { name: "Expand spots" }).click();
-    await expect(sheet(page)).toHaveAttribute("data-snap", "1");
+    await expect(sheet(page)).toHaveAttribute("data-snap", "rest");
+    expect(await settledTop(page)).toBe(rest);
+    await page.getByRole("button", { name: "Expand spots" }).click();
+    await expect(sheet(page)).toHaveAttribute("data-snap", "mid");
     const mid = await settledTop(page);
     expect(mid, "mid stands well above rest").toBeLessThan(rest - 60);
     await expect(page.getByRole("button", { name: "Expand spots" })).toBeVisible(); // once more, to full
     await page.getByRole("button", { name: "Expand spots" }).click();
-    await expect(sheet(page)).toHaveAttribute("data-snap", "2");
+    await expect(sheet(page)).toHaveAttribute("data-snap", "full");
     const full = await settledTop(page);
     expect(full, "full stands above mid").toBeLessThan(mid - 60);
     await page.getByRole("button", { name: "Collapse spots" }).click();
@@ -274,6 +294,63 @@ for (const size of [{ width: 320, height: 568 }, { width: 375, height: 667 }, { 
     expect(await settledTop(page)).toBe(mid);
   });
 }
+
+test("phone: swiped down from rest, the sheet is just its handle and the day's answer; the map band follows, and a tap on the answer raises it to rest", async ({ page }) => {
+  const vp = page.viewportSize()!;
+  const rest = await settledTop(page);
+  const cy = () => page.getByTestId("view-target").evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue("--cy")));
+  const restCross = await cy();
+  // the board's top answer, as the first card says it (name and verdict)
+  const first = sheet(page).locator("button:has(h3)").first();
+  const name = (await first.locator("h3").textContent())!;
+  const verdict = (await first.getByText(/^(On now|On at \d{1,2} (AM|PM)|Next: [A-Z][a-z]{2} \d{1,2} (AM|PM)|No session( this week)?)$/).first().textContent())!;
+  const summary = page.getByTestId("sheet-summary");
+  await expect(sheet(page).locator("[data-sheet-summary]")).toHaveCount(0); // only at the handle (faded out and inert otherwise)
+  await expect(summary.locator("..")).toHaveCSS("opacity", "0");
+
+  // a swipe down on the resting sheet (from its grabber: a swipe that ends on a card would also open it) lowers it to the handle
+  const s = await box(sheet(page));
+  await page.mouse.move(s.x + s.width / 2, rest + 12);
+  await page.mouse.down();
+  await page.mouse.move(s.x + s.width / 2, vp.height - 10, { steps: 12 });
+  await page.mouse.up();
+  await expect(sheet(page)).toHaveAttribute("data-snap", "handle");
+  const handle = await settledTop(page);
+  expect(vp.height - handle).toBeLessThanOrEqual(84);
+  await expect(page.getByRole("button", { name: "Expand spots" })).toHaveAttribute("aria-expanded", "false");
+
+  // one line: the best spot and when, from the same ranking as the board
+  await expect(sheet(page).locator("[data-sheet-summary]")).toHaveCount(1);
+  await expect(summary).toBeInViewport({ ratio: 1 });
+  const said = (await summary.getAttribute("aria-label"))!;
+  expect(said).toMatch(/^(.+ · On (now|at \d{1,2} (AM|PM))|No session today · Next: [A-Z][a-z]{2} \d{1,2} (AM|PM) · .+|No session this week( · .+)?)\. Show your spots$/);
+  if (verdict !== "No session this week") expect(said).toContain(name);
+  if (/^(On|Next)/.test(verdict)) expect(said).toContain(verdict);
+
+  // the timeline still floats above it, clear of the rail, and the cross-hair moves down with the open map
+  const card = await box(timelineCard(page));
+  expect(card.y + card.height).toBeLessThanOrEqual(handle);
+  for (const label of RAIL) expect(overlap(card, await box(page.locator(`button[aria-label="${label}"]`))), label).toBe(false);
+  await expect.poll(cy).toBeGreaterThan(restCross + 100);
+  expect(await cy()).toBeLessThan(card.y);
+
+  // a tap on the answer brings the board back at rest
+  await summary.click();
+  await expect(sheet(page)).toHaveAttribute("data-snap", "rest");
+  await expect.poll(() => sheetTop(page)).toBe(rest);
+  await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeInViewport();
+  await expect.poll(cy).toBe(restCross);
+});
+
+test("phone: a tap on the timeline's wind strip jumps to that hour, and the sheet stays put", async ({ page }) => {
+  const rest = await settledTop(page);
+  const slider = page.getByRole("slider", { name: "Forecast time" });
+  const bar = await box(page.locator("[data-wind-strip] [data-bar]").nth(30).locator("rect").first());
+  await page.touchscreen.tap(bar.x + bar.width / 2, bar.y + bar.height - 2);
+  await expect(slider).toHaveAttribute("aria-valuenow", "30");
+  await expect(page.getByRole("button", { name: "Back to now" })).toBeVisible();
+  expect(await settledTop(page)).toBe(rest);
+});
 
 test("phone: Escape in a focused chart clears its cursor and leaves the spot open; the next Escape closes the spot", async ({ page }) => {
   await page.locator(".maplibregl-marker button[aria-label^='Fort De Soto,']").click();
@@ -306,7 +383,7 @@ test("phone: a location that arrives after Add was cancelled is dropped (no pin,
   await sheet(page).getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page).not.toHaveURL(/add=1/);
   await page.waitForTimeout(2500); // the position comes in now
-  await expect(sheet(page)).toHaveAttribute("data-snap", "0");
+  await expect(sheet(page)).toHaveAttribute("data-snap", "rest");
   expect(await settledTop(page)).toBe(rest);
   await expect(page.locator("[data-pin]")).toHaveCount(0);
   const after = (await marker.boundingBox())!;

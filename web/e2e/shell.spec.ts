@@ -318,3 +318,63 @@ test("the timeline's threshold tag sits on a solid chip, clear of the day names 
   expect(clear).toEqual({ solid: true, days: expect.any(Number), clearOfDays: true, clearOfTicks: true });
   expect(clear.days).toBeGreaterThan(3);
 });
+
+test("the timeline's track is the week's wind: one bar per hour in the map's colours, taller when windier, night dimmed; tap, drag and keys pick the hour", async ({ page }) => {
+  const slider = page.getByRole("slider", { name: "Forecast time" });
+  await expect(slider).toBeVisible();
+  const strip = page.locator("[data-wind-strip]");
+  const hours = Number(await slider.getAttribute("aria-valuemax")) + 1;
+  expect(hours).toBeGreaterThan(48);
+  const bars = strip.locator("[data-bar]");
+  await expect(bars).toHaveCount(hours);
+
+  const read = await strip.evaluate((el) => {
+    const svg = el.querySelector("svg")!;
+    const grad = svg.querySelector("linearGradient")!;
+    const colours = new Set([...grad.querySelectorAll("stop")].map((s) => s.getAttribute("stop-color")));
+    const bars = [...svg.querySelectorAll("[data-bar]")].map((g) => {
+      const r = g.querySelector("rect")!;
+      return { kn: Number(g.getAttribute("data-kn")), h: r.getBoundingClientRect().height, fill: r.getAttribute("fill")!, night: g.hasAttribute("data-night") };
+    });
+    const labels = [...svg.querySelectorAll("text")].map((t) => t.textContent);
+    return { gradId: grad.id, colours: colours.size, bars, labels };
+  });
+  // filled with the wind scale, one gradient for all of them
+  expect(read.colours).toBeGreaterThan(8);
+  for (const b of read.bars) expect(b.fill).toBe(`url(#${read.gradId})`);
+  // the windier the hour, the taller its bar, dramatically so
+  const byKn = [...read.bars].sort((a, b) => a.kn - b.kn);
+  for (let i = 1; i < byKn.length; i++) if (byKn[i].kn > byKn[i - 1].kn) expect(byKn[i].h).toBeGreaterThanOrEqual(byKn[i - 1].h - 0.01);
+  const calm = byKn[0], windy = byKn.at(-1)!;
+  expect(windy.kn - calm.kn).toBeGreaterThan(8);
+  expect(windy.h).toBeGreaterThan(calm.h * 2);
+  // nights dimmed, days labelled
+  expect(read.bars.some((b) => b.night)).toBe(true);
+  expect(read.bars.some((b) => !b.night)).toBe(true);
+  expect(read.labels).toContain("Now");
+  expect(read.labels.filter((t) => /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$/.test(t ?? "")).length).toBeGreaterThan(3);
+
+  // a tap on a bar jumps to that hour; the frame sits over it
+  const centre = async (i: number) => { const b = await box(bars.nth(i).locator("rect").first()); return { x: b.x + b.width / 2, y: b.y + b.height - 2 }; };
+  const at = await centre(40);
+  await page.mouse.click(at.x, at.y);
+  await expect(slider).toHaveAttribute("aria-valuenow", "40");
+  await expect(page.getByTestId("timeline-when")).toHaveText(/^\w{3} \d{1,2} (AM|PM)$/);
+  const frame = await box(slider);
+  expect(Math.abs(frame.x + frame.width / 2 - at.x)).toBeLessThanOrEqual(2);
+  // a drag scrubs
+  const from = await centre(10), to = await centre(70);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  await page.mouse.up();
+  await expect(slider).toHaveAttribute("aria-valuenow", "70");
+  // and the keys still work on the frame
+  await slider.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(slider).toHaveAttribute("aria-valuenow", "71");
+  await expect(slider).toHaveAttribute("aria-valuetext", /SeaSensei forecast/);
+  await page.keyboard.press("Home");
+  await expect(slider).toHaveAttribute("aria-valuenow", "0");
+  await expect(page.getByTestId("timeline-when")).toHaveText("Now");
+});
