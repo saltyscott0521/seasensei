@@ -21,25 +21,34 @@ export const DRAWER_H = 0.96;
  * phones) and the top two spot cards (≤ 104px each), names and verdicts in view.
  */
 export const REST_VISIBLE = 320;
+/**
+ * Visible height of the lowest snap, "just a handle", above the bottom safe area: the grabber row (36px) and one 40px
+ * line with the day's answer ("Fort De Soto · On at 1 PM"), so nearly the whole screen is map.
+ */
+export const HANDLE_VISIBLE = 80;
 /** The mid snap's height on a tall screen, and the full snap, as fractions of the viewport. */
 export const MID = 0.56;
 export const FULL = 0.94;
 /** On a short phone, where MID of the screen would sit at or barely above rest: how far mid rises over rest (at most halfway to full). */
 export const MID_STEP = 120;
-export type SnapIndex = 0 | 1 | 2;
-export const SNAP_REST = 0, SNAP_MID = 1, SNAP_FULL = 2;
+export type SnapIndex = 0 | 1 | 2 | 3;
+export const SNAP_HANDLE = 0, SNAP_REST = 1, SNAP_MID = 2, SNAP_FULL = 3;
+/** The snaps' names (the sheet's data-snap). */
+export const SNAP_NAMES = ["handle", "rest", "mid", "full"] as const;
 
 /**
- * The sheet's snap points for this viewport, strictly rising: a px rest snap sized so REST_VISIBLE px show above the
+ * The sheet's snap points for this viewport, strictly rising: a px handle snap (HANDLE_VISIBLE px above the bottom
+ * safe area), a px rest snap sized so REST_VISIBLE px show above the
  * bottom safe area; a px mid snap at MID of the screen, but always above rest (halfway to full, up to MID_STEP more,
  * on a short phone, where MID of the screen would sit at or under rest); then FULL. The px values follow vh, so App
  * keeps the active snap as an index.
  */
-export function sheetSnaps(vh: number, sab: number): [string, string, number] {
+export function sheetSnaps(vh: number, sab: number): [string, string, string, number] {
+  const handle = Math.round(HANDLE_VISIBLE + sab + (1 - DRAWER_H) * vh);
   const rest = Math.round(REST_VISIBLE + sab + (1 - DRAWER_H) * vh);
   const full = FULL * vh;
   const mid = Math.round(Math.max(MID * vh, rest + Math.min(MID_STEP, (full - rest) / 2)));
-  return [`${rest}px`, `${mid}px`, FULL];
+  return [`${handle}px`, `${rest}px`, `${mid}px`, FULL];
 }
 
 /** Page y of the sheet's top edge at a vaul snap point. */

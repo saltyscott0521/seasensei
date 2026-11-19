@@ -12,6 +12,7 @@ import { AlertBanner } from "./components/shell/AlertBanner";
 import { MapActions, RailActions } from "./components/shell/MapActions";
 import { Panel } from "./components/shell/Panel";
 import { Sheet, sheetEscapes, type TimelinePlace } from "./components/shell/Sheet";
+import { SheetSummary } from "./components/shell/SheetSummary";
 import { PanelBrand, status, StatusPill } from "./components/shell/Status";
 import { UpdateBoundary } from "./components/shell/UpdateBoundary";
 import { useHeight } from "./components/shell/useHeight";
@@ -277,7 +278,11 @@ export default function App() {
 
   // Marine alerts in force (NWS): one quiet row above the view, in the panel and in the sheet. Not over the add form.
   const alerts = useMarineAlerts(spots);
-  const raiseForAlert = useCallback(() => setSnap((s) => (s === SNAP_REST ? SNAP_MID : s)), []);
+  const raiseForAlert = useCallback(() => setSnap((s) => (s <= SNAP_REST ? SNAP_MID : s)), []);
+  // The handle snap's one line: the board's answer (or the open spot's), a tap away from the rest of the sheet.
+  const raiseToRest = useCallback(() => setSnap(SNAP_REST), []);
+  const summaryEl = useMemo(() => <SheetSummary spotId={view.kind === "spot" ? view.id : null} adding={adding} onOpen={raiseToRest} />,
+    [view, adding, raiseToRest]);
   const alertEl = useMemo(() => (adding || !alerts.length ? null : <AlertBanner alerts={alerts} tz={tz} onOpen={raiseForAlert} />), [adding, alerts, tz, raiseForAlert]);
 
   const timelineEl = useMemo(() => (
@@ -352,7 +357,7 @@ export default function App() {
 
         {!desktop && (
           <Sheet snaps={snaps} index={snap} onIndex={setSnap} timeline={timelineEl} place={place}
-            scrollRef={scrollRef} onScroll={onScroll} floatRef={floatRef} status={said.text}>
+            scrollRef={scrollRef} onScroll={onScroll} floatRef={floatRef} status={said.text} summary={summaryEl}>
             {alertEl}
             {panel}
           </Sheet>

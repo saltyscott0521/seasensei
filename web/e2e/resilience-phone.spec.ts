@@ -49,8 +49,8 @@ test("phone: a marine alert sits in the sheet above the board; opening it raises
   const vp = page.viewportSize()!;
   const card = (await sheet(page).getByRole("button", { name: /Fort De Soto/ }).first().boundingBox())!;
   expect(card.y).toBeLessThan(vp.height - 60);
-  await expect(sheet(page)).toHaveAttribute("data-snap", "0");
+  await expect(sheet(page)).toHaveAttribute("data-snap", "rest");
   await row.tap();
-  await expect(sheet(page)).toHaveAttribute("data-snap", "1");
+  await expect(sheet(page)).toHaveAttribute("data-snap", "mid");
   await expect(alerts.getByText(/Southwest winds 20 to 25 kt/)).toBeVisible();
 });

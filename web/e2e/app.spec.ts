@@ -138,9 +138,9 @@ test("the timeline scrubs the week: header, markers and station layer follow the
   const slider = page.getByRole("slider", { name: "Forecast time" });
   await expect(slider).toBeVisible();
 
-  // the week's outlook for the area in view: a chart plus a headline you can tap to jump there
+  // the week's outlook for the area in view: a strip of wind (one bar per hour) plus a headline you can tap to jump there
   const chart = page.getByRole("img", { name: "Wind in view over the next week" });
-  await expect(chart.locator("path")).toHaveCount(2); // typical (filled) + strongest in view
+  await expect(chart.locator("[data-bar]")).toHaveCount(Number(await slider.getAttribute("aria-valuemax")) + 1);
   const outlook = page.getByTestId("outlook");
   await expect(outlook).toHaveText(/Windy now: up to \d+ kn in view|Wind on the way: .+ up to \d+ kn|No 15\+ kn in view this week/);
   const text = (await outlook.textContent())!;

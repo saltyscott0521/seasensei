@@ -1,4 +1,3 @@
-import * as Slider from "@radix-ui/react-slider";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
 import { Pause, Play, RotateCcw, Wind, WifiOff } from "lucide-react";
@@ -6,32 +5,28 @@ import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useSpots } from "../lib/data";
 import { duration, ease, spring } from "../lib/motion";
 import { fmtHour, fmtWeekday, isDaylightHour } from "../lib/session";
-import { compass, MODEL_INFO, windColor, windGradient, windStops, type Model } from "../lib/wind";
-import { fmtWhen, fmtWhenLong, hourOfDay, labelWidth, nightSpans, useSvgId } from "./charts/scale";
+import { compass, MODEL_INFO, windGradient, type Model } from "../lib/wind";
+import { fmtWhen, fmtWhenLong, hourOfDay, nightSpans } from "./charts/scale";
 import { Skeleton } from "./bits";
 import { Button, Chip, IconButton } from "./ui";
-import { useChartSize } from "./useChartSize";
+import { WindStrip, type Area } from "./WindStrip";
 
-type Area = { mean: number; peak: number; dir: number } | null;
-
-// Radix keeps the 20px thumb inside the track, so its centre runs from 10px to width−10px.
-// The chart uses the same inset so a point on the chart sits exactly above the thumb for that hour.
-const INSET = 10;
-const CHART_H = 44;
 const HOUR = 3600e3;
 const SCALE_MAX = 45; // windGradient() spans 0–45 kn
 
 /**
- * Scrub the map through the week. One line of outlook (tap it to jump there), a chart of the wind across whatever is
- * on screen (filled = typical, line = strongest in view, dashed = your threshold), the slider with the hour and model,
- * and the map's colour scale. Index 0 is now. Slim on purpose: on phones the whole card stays within 132px.
+ * Scrub the map through the week. One line of outlook (tap it to jump there), the week as a strip of wind (one bar per
+ * hour: the strongest wind in view, in the map's colours, its height dramatic; dashed = your threshold) that is also the
+ * slider (a framed hour; tap or drag anywhere on it, arrow keys on the frame), the hour and model, and the map's colour
+ * scale. Index 0 is now. Slim on purpose: on phones the whole card stays within 132px.
  * Scrubbed (index > 0), the top line describes the chosen hour instead of the outlook from now.
  *
  * The outlook only ever points at daylight, in stretches of two hours or more, like the sessions on the board: a windy
  * night is not "wind on the way". The chip names the forecast the rider chose (`primary`); when that is SeaSensei, a
  * blend made per spot, the map's own wind comes from a single model, named as a detail ("wind map HRRR").
  *
- * `compact`: no chart (the outlook line, the slider and its readout), for a timeline riding inside a short phone's sheet.
+ * `compact`: a short strip with no day names (the outlook line, the strip and its readout), for a timeline riding inside a
+ * short phone's sheet.
  * `failed`: the wind field could not load: a one-line "unavailable" card with Try again (`onRetry`). While loading, a
  * placeholder holds the card's place.
  * `where`: where the night shading is worked out for; defaults to the middle of your spots.
@@ -164,19 +159,8 @@ export const Timeline = memo(function Timeline({ hours, models, area, threshold,
         </motion.button>
 
         <div className="@container min-w-0 flex-1">
-          {!compact && <AreaChart area={area} index={index} threshold={threshold} nbmFrom={nbmFrom} days={days} nights={nights} onSeek={seek} summary={summary} />}
-          <Slider.Root className="relative flex h-5 w-full touch-none select-none items-center before:absolute before:inset-x-0 before:-inset-y-2"
-            min={0} max={last} step={1} value={[index]} onValueChange={([v]) => seek(v)}>
-            <Slider.Track className="relative h-1 grow overflow-hidden rounded-full bg-line-strong">
-              {nbmFrom > 0 && (
-                <span aria-hidden className="absolute inset-y-0 right-0"
-                  style={{ left: `${(nbmFrom / last) * 100}%`, background: "repeating-linear-gradient(135deg, var(--color-fg-3) 0 1.5px, transparent 1.5px 4px)", opacity: 0.45 }} />
-              )}
-              <Slider.Range className="absolute h-full rounded-full bg-accent" />
-            </Slider.Track>
-            <Slider.Thumb ref={thumbRef} aria-label="Forecast time" aria-valuetext={valueText}
-              className="block size-5 cursor-grab rounded-full border-[3px] border-accent bg-fg shadow-raised active:cursor-grabbing" />
-          </Slider.Root>
+          <WindStrip area={area} index={index} threshold={threshold} nbmFrom={nbmFrom} days={days} nights={nights} onSeek={seek}
+            summary={summary} valueText={valueText} thumbRef={thumbRef} compact={compact} />
           <div className="mt-0.5 flex h-4 items-center gap-3">
             <span className="num min-w-0 flex-1 truncate text-micro text-fg-2">
               <b data-testid="timeline-when" className="font-semibold text-fg">{label}</b>
@@ -235,8 +219,8 @@ function TimelinePlaceholder({ compact }: { compact?: boolean }) {
       <div className="mt-1 flex items-center gap-2.5 max-md:gap-2">
         <div className={clsx("grid shrink-0 place-items-center rounded-full bg-surface-3 text-fg-3", compact ? "size-9" : "size-10")}><Play aria-hidden className="ml-0.5 size-4" /></div>
         <div className="@container min-w-0 flex-1">
-          {!compact && <Skeleton className="h-11 rounded-sm" />}
-          <div className="flex h-5 items-center"><i className="block h-1 w-full rounded-full bg-line-strong" /></div>
+          {/* the strip's height: day names and bars, or the compact bars */}
+          <Skeleton className={clsx("rounded-sm", compact ? "h-5" : "h-14")} />
           <div className="mt-0.5 flex h-4 items-center justify-end"><Scale /></div>
         </div>
         <div className="size-9 shrink-0" />
@@ -255,136 +239,5 @@ function TimelineFailed({ onRetry }: { onRetry?: () => void }) {
       </p>
       {onRetry && <Button size="sm" onClick={() => onRetry()}>Try again</Button>}
     </div>
-  );
-}
-
-/**
- * The week in view. Exactly two <path>s (typical as a fill, strongest as a line); everything else is a line, rect,
- * circle or text. The x scale shares INSET with the slider, so a tap seeks to the hour under it.
- */
-function AreaChart({ area, index, threshold, nbmFrom, days, nights, onSeek, summary }: {
-  area: Area[]; index: number; threshold: number; nbmFrom: number; days: { i: number; label: string }[]; nights: [number, number][];
-  onSeek: (i: number) => void; summary: string;
-}) {
-  const [ref, { w: W }] = useChartSize(CHART_H, 0, CHART_H);
-  const H = CHART_H;
-  const svgRef = useRef<SVGSVGElement>(null);
-  const last = Math.max(1, area.length - 1);
-  const gradId = useSvgId("area");
-
-  const m = useMemo(() => {
-    const vals = area.flatMap((a) => (a ? [a.peak] : []));
-    const top = Math.max(25, Math.ceil((Math.max(threshold, ...vals) + 2) / 5) * 5);
-    const x = (i: number) => INSET + (i / last) * (W - 2 * INSET);
-    const y = (v: number) => H - 2 - (v / top) * (H - 10);
-    return { top, x, y };
-  }, [area, threshold, W, H, last]);
-
-  function seekAt(e: React.PointerEvent) {
-    const r = svgRef.current!.getBoundingClientRect();
-    onSeek(Math.round(((e.clientX - r.left - INSET) / (r.width - 2 * INSET)) * last));
-  }
-
-  const a = area[index];
-  const cx = m.x(index);
-  return (
-    <div ref={ref} style={{ height: H }}>
-      {W > 0 && (
-        <svg ref={svgRef} width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="block cursor-pointer touch-pan-y select-none" role="img"
-          aria-label={`Wind in view over the next week${summary ? `: ${summary}` : ""}`}
-          onPointerDown={(e) => { (e.target as Element).setPointerCapture?.(e.pointerId); seekAt(e); }}
-          onPointerMove={(e) => e.buttons && seekAt(e)}>
-          <AreaLayer area={area} m={m} W={W} H={H} threshold={threshold} nbmFrom={nbmFrom} days={days} nights={nights} gradId={gradId} />
-          <line x1={cx} x2={cx} y1={0} y2={H} className="stroke-fg" strokeOpacity=".85" />
-          {a && <circle cx={cx} cy={m.y(a.peak)} r="3.5" fill={windColor(a.peak)} strokeWidth="1.5" className="stroke-ink" />}
-        </svg>
-      )}
-    </div>
-  );
-}
-
-/** Everything in the chart that doesn't move with the cursor. Memoised: scrubbing only redraws the cursor. */
-const AreaLayer = memo(function AreaLayer({ area, m, W, H, threshold, nbmFrom, days, nights, gradId }: {
-  area: Area[]; m: { top: number; x: (i: number) => number; y: (v: number) => number }; W: number; H: number; threshold: number;
-  nbmFrom: number; days: { i: number; label: string }[]; nights: [number, number][]; gradId: string;
-}) {
-  const last = Math.max(1, area.length - 1);
-  const line = (k: "mean" | "peak") => {
-    let d = "", pen = false;
-    area.forEach((a, i) => { if (!a) { pen = false; return; } d += `${pen ? "L" : "M"}${m.x(i).toFixed(1)},${m.y(a[k]).toFixed(1)}`; pen = true; });
-    return d;
-  };
-  const mean = line("mean"), peak = line("peak");
-  const fill = mean ? `${mean}L${m.x(last).toFixed(1)},${H}L${m.x(0).toFixed(1)},${H}Z` : "";
-  return (
-    <g>
-      <defs>
-        <linearGradient id={gradId} x1="0" y1={m.y(0)} x2="0" y2={m.y(m.top)} gradientUnits="userSpaceOnUse">
-          {windStops(m.top).map((st, i) => <stop key={i} offset={st.offset} stopColor={st.color} />)}
-        </linearGradient>
-      </defs>
-      {nights.map(([a, b]) => (
-        <rect key={a} x={m.x(Math.max(0, a))} width={Math.max(0, m.x(Math.min(last, b)) - m.x(Math.max(0, a)))} y={0} height={H} rx={2} className="fill-ink/40" />
-      ))}
-      {days.map(({ i, label }, k) => {
-        const next = days[k + 1]?.i ?? last;
-        return (
-          <g key={i}>
-            <line x1={m.x(i)} x2={m.x(i)} y1={0} y2={H} className="stroke-line-strong" />
-            {/* every day's name that fits inside its day (the threshold tag keeps clear of them) */}
-            {m.x(next) - m.x(i) >= labelWidth(label) + 6 && <text x={m.x(i) + 4} y={10} fontSize="10" fontWeight="600" className="fill-fg-3">{label}</text>}
-          </g>
-        );
-      })}
-      {nbmFrom > 0 && <line x1={m.x(nbmFrom)} x2={m.x(nbmFrom)} y1={12} y2={H} stroke={MODEL_INFO.nbm.color} strokeOpacity=".5" strokeDasharray="2 3" />}
-      {fill && <path d={fill} fill={`url(#${gradId})`} fillOpacity=".3" />}
-      {peak && <path d={peak} fill="none" stroke={`url(#${gradId})`} strokeWidth="1.75" strokeLinejoin="round" />}
-      <line x1={INSET} x2={W - INSET} y1={m.y(threshold)} y2={m.y(threshold)} strokeDasharray="3 3" className="stroke-fg-3" />
-      <ThresholdTag area={area} m={m} W={W} H={H} threshold={threshold} days={days} />
-    </g>
-  );
-});
-
-/**
- * The threshold's "15 kn" tag, on a solid chip so nothing shows through it, at the first place along its line where it
- * clears the strongest-wind line, the day ticks and their names: the right end, then the left, then along the line from
- * the right, under or over it (inside the chart). Where the line runs everywhere, the first place clear of the days.
- */
-function ThresholdTag({ area, m, W, H, threshold, days }: {
-  area: Area[]; m: { x: (i: number) => number; y: (v: number) => number }; W: number; H: number; threshold: number;
-  days: { i: number; label: string }[];
-}) {
-  const text = `${threshold} kn`;
-  const w = Math.ceil(labelWidth(text)) + 6, h = 12, ly = m.y(threshold);
-  const last = Math.max(1, area.length - 1);
-  // the ends first, then along the line from the right
-  const xs = [W - INSET - w, INSET + 2];
-  for (let x = W - INSET - w - 8; x > INSET + 2; x -= 8) xs.push(x);
-  const ys = [ly + 2, ly - 2 - h].filter((y) => y >= 0 && y + h <= H);
-  const clear = (x0: number, y0: number, curve: boolean) => {
-    const x1 = x0 + w, y1 = y0 + h;
-    // day ticks and the names written along the top
-    for (const { i, label } of days) {
-      const dx = m.x(i);
-      if (dx >= x0 - 1 && dx <= x1 + 1) return false;
-      if (y0 < 12 && dx + 4 < x1 && dx + 4 + labelWidth(label) > x0) return false;
-    }
-    // the strongest-wind line, between the hours either side of the chip
-    if (curve) for (let i = 0; i <= last; i++) {
-      const a = area[i];
-      if (!a || m.x(i) < x0 - 6 || m.x(i) > x1 + 6) continue;
-      const y = m.y(a.peak);
-      if (y >= y0 - 2 && y <= y1 + 2) return false;
-    }
-    return true;
-  };
-  // Clear of everything; else at least of the days (the chip then hides a stretch of the line, never a day's name).
-  let at: [number, number] = [xs[0], ys[0] ?? Math.max(0, Math.min(H - h, ly + 2))];
-  outer: for (const curve of [true, false]) for (const x of xs) for (const y of ys) if (clear(x, y, curve)) { at = [x, y]; break outer; }
-  return (
-    <g data-threshold-tag transform={`translate(${at[0]},${at[1]})`}>
-      <rect width={w} height={h} rx={3} className="fill-ink" />
-      <text x={w / 2} y={9} textAnchor="middle" fontSize="10" fontWeight="600" className="num fill-fg-2">{text}</text>
-    </g>
   );
 }

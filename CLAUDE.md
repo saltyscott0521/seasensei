@@ -41,11 +41,14 @@ Software WebGL makes runs slow: use `--trace off --workers=2`. Don't edit `src/`
 - **One clock** (`src/lib/time.tsx`): the timeline's chosen hour is `useAt()` (null = now); map, cards, hero, hour grid and chart
   cursors all follow it. Anything may ask for an hour with `requestAt(t)`; the shell listens with `onAtRequest`.
 - **Shell** (`App.tsx`, `components/shell/`, `lib/layout.ts`): desktop = docked glass panel + timeline dock; phones = status pill,
-  one control rail (Add a spot, Stations, Find my location — no zoom buttons, pinch zooms), the vaul sheet (rest 320 px / mid / full, all in px and strictly rising,
-  a grabber button) with the timeline floating above it (a compact one-line timeline inside the sheet where it can't float).
+  one control rail (Add a spot, Stations, Find my location — no zoom buttons, pinch zooms), the vaul sheet (handle 80 px — the grabber and the day's answer in one line,
+  `shell/SheetSummary.tsx` — / rest 320 px / mid / full, all in px and strictly rising; the app opens at rest; a grabber button, its
+  arrow keys move a snap; `data-snap` is the snap's name) with the timeline floating above it (a compact one-line timeline inside the sheet where it can't float).
   One "visible map band" calculation drives the map padding and the cross-hair. Layers (spot, add, discussion) live in history:
   `?spot=`, `?add=1`, `?discussion=`; full-screen charts and spot settings push their own entries; back/Escape close the top one.
   The chosen timeline hour is kept as a time (not an index) and consumers read a deferred copy, so scrubbing stays light.
+  The timeline's track is `WindStrip.tsx`: one bar per hour (strongest wind in view, wind-scale gradient, height ∝ (kn/25)^1.4,
+  nights dimmed); the Radix thumb is the framed hour (keys), the strip itself takes taps and drags on the same scale.
 - **Loading**: WindMap (and maplibre) is lazy-loaded so the board paints first; `setWorkerUrl` lives at the top of `WindMap.tsx`.
   `components/shell/UpdateBoundary.tsx` wraps every lazy view and the root: when a chunk it needs 404s after a deploy it reloads once
   (online, sessionStorage-guarded), then shows "SeaSensei was updated — Reload". Speculative prefetches fail silently.
