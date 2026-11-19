@@ -123,7 +123,7 @@ export const ForecastChart = memo(function ForecastChart({ forecast, spot, onScr
         </DrawIn>
 
         {m.nbmX != null && <rect pointerEvents="none" x={m.nbmX} width={Math.max(0, W - R - m.nbmX)} y={T} height={H - T - B} fill={`url(#${ids.hatch})`} />}
-        <Handoffs hand={m.hand} box={box} W={W} labelY={14} confidence />
+        <Handoffs hand={m.hand} box={box} W={W} labelY={14} confidence labels={!c} />
         {nowX != null && <NowLine x={nowX} box={box} tag={!c} />}
 
         {c && (

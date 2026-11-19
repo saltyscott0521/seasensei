@@ -136,4 +136,35 @@ test("one key names every mark on the charts; wrong direction is hatched in the 
   // the arrow keys are mentioned where a keyboard user will find them
   await expect(page.getByRole("region", { name: "Charts" })).toContainText("← →");
   await expect(page.locator('svg[aria-label="48 hour wind forecast"]')).toHaveAccessibleDescription(/arrow keys read each hour/);
+  // the hour grid says it too: hatched under the bar, in words in the hour's name
+  const wrong = page.getByRole("table", { name: /Hour by hour/ }).locator('td[data-ride="wrongdir"]').first();
+  await expect(wrong).toHaveAccessibleName(/, from SW, wrong direction$/);
+  await expect(page.getByRole("list", { name: "Colour key" })).toContainText("Wrong direction");
+});
+
+test("the cursor's readout never sits on a handoff label", async ({ page }) => {
+  // a raw model hands HRRR → RRFS → NBM inside the week, with the names in the chart's top band
+  await page.evaluate(() => localStorage.setItem("primaryModel", "hrrr"));
+  await page.reload();
+  await openSpot(page, "Fort De Soto");
+  await page.getByRole("button", { name: "7 days" }).click();
+  const chart = page.locator('svg[aria-label="7 day wind forecast"]');
+  const label = chart.locator('[data-handoff="NBM"] text');
+  await expect(label).toHaveText("NBM · lower confidence");
+  // point at the handoff itself: the readout lands right where the label was
+  await chart.scrollIntoViewIfNeeded();
+  const line = (await chart.locator('[data-handoff="NBM"] line').boundingBox())!, box = (await chart.boundingBox())!;
+  await page.mouse.move(line.x + 1, box.y + box.height / 2, { steps: 2 });
+  const pill = chart.locator("text.num").filter({ hasText: /gusts \d+/ });
+  await expect(pill).toBeVisible();
+  const p = (await pill.locator("xpath=..").boundingBox())!;
+  for (const t of await chart.locator("[data-handoff] text").all()) {
+    const b = await t.boundingBox();
+    if (b) expect(b.x + b.width <= p.x || b.x >= p.x + p.width || b.y + b.height <= p.y || b.y >= p.y + p.height, "a label under the readout").toBe(true);
+  }
+  // the line stays, and the name comes back when the cursor goes
+  await expect(chart.locator('[data-handoff="NBM"] line')).toBeAttached();
+  await page.mouse.move(box.x + box.width / 2, box.y - 40);
+  await expect(pill).toHaveCount(0);
+  await expect(label).toBeVisible();
 });

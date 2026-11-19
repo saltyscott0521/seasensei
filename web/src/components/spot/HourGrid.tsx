@@ -1,27 +1,40 @@
 import clsx from "clsx";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent } from "react";
 import { fmtRange } from "../../lib/sensei";
-import { fmtHour, isDaylightHour } from "../../lib/session";
-import { useNow } from "../../lib/time";
-import { compass, rideState, windColor, type Hour, type Spot } from "../../lib/wind";
+import { fmtHour, isDaylightHour, sessions } from "../../lib/session";
+import { requestAt, useCanSetAt, useNow } from "../../lib/time";
+import { compass, windColor, type Hour, type Spot } from "../../lib/wind";
+import { hourState } from "../home/board";
 import { Skeleton } from "../bits";
-import { SectionHeader } from "../ui";
+import { RIBBON_WORDS, SectionHeader, type RibbonState } from "../ui";
 
 const HOUR = 3600e3;
-const COL = 40; // px per hour
-const LABEL = 44; // the sticky row-label column
+const COL = 28; // px per hour: 12+ hours across a phone
 
-type Ride = "go" | "below" | "above" | "offdir" | "night";
-type Col = { h: Hour; night: boolean; ride: Ride; dayStart: boolean; now: boolean };
+/** An hour's answer: the ribbon's states (go only inside a session), or night (never a session, whatever the wind). */
+type State = Exclude<RibbonState, "none"> | "night";
+type Col = { h: Hour; state: State; dayStart: boolean; now: boolean; words: string; label: string };
 
-const RIDE_WORDS: Record<Ride, string> = { go: "rideable", below: "too light", above: "too strong", offdir: "wrong direction", night: "night" };
-const RIDE_FILL: Record<Ride, string> = { go: "bg-go", below: "bg-off/50", above: "bg-strong", offdir: "", night: "bg-line" };
+const WORDS: Record<State, string> = { ...RIBBON_WORDS, night: "night" };
+// The bars and gust cells carry the wind scale; the thin band under them carries the answer (the colour contract),
+// joined into runs. Too light and night draw no band: the short bars say it.
+const BAND: Record<State, string> = { go: "bg-go", soon: "bg-soon", strong: "bg-strong", wrongdir: "", off: "", night: "" };
+const NIGHT_KEY = "h-2 w-3 rounded-[2px] bg-ink/60 ring-1 ring-inset ring-line-strong";
 const HATCH: CSSProperties = {
   background: "repeating-linear-gradient(135deg, var(--color-wrongdir) 0 2px, color-mix(in oklab, var(--color-wrongdir) 28%, transparent) 2px 4px)",
 };
-// The sticky label column sits over scrolling cells: the card's fill on the panel colour on solid ink, so it reads as
-// the card and nothing ghosts through it. (Its width is LABEL; the day names stick at left-[44px] to match.)
-const STICKY = "sticky left-0 z-10 border-r border-line [background:linear-gradient(var(--color-surface-2),var(--color-surface-2)),linear-gradient(var(--color-surface-1),var(--color-surface-1)),var(--color-ink)]";
+const KEY: State[] = ["go", "soon", "strong", "wrongdir", "night"];
+const KEY_WORDS: Record<State, string> = { go: "Rideable", soon: "Marginal", off: "Too light", strong: "Too strong", wrongdir: "Wrong direction", night: "Night" };
+/** The bars' fixed scale: 0–TOP kn over PLOT px, so 8 kn is short and 24 kn towers (the number rides on top). */
+const TOP = 30, PLOT = 76, HEAD = 15;
+const barPx = (kn: number) => Math.max(14, Math.round((Math.min(kn, TOP) / TOP) * PLOT));
+/** The wind scale's colour for a speed, and ink or white on it, whichever reads (WCAG luminance). */
+function swatch(kn: number) {
+  const [r, g, b] = windColor(kn).match(/\d+/g)!.map(Number);
+  const lin = (c: number) => ((c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return { background: `rgb(${r},${g},${b})`, color: L > 0.2 ? "var(--color-ink)" : "#fff" };
+}
 
 const fmts = new Map<string, Intl.DateTimeFormat>();
 const dayKeyFmt = (tz: string) => {
@@ -37,32 +50,39 @@ function dayLabel(t: number, tz: string, now: number) {
   return `${p.weekday} ${Number(p.day)}`;
 }
 const dayKey = (t: number, tz: string) => dayKeyFmt(tz).formatToParts(t).filter((x) => x.type === "day" || x.type === "month").map((x) => x.value).join("-");
+/** "3 PM" → "3p" on even hours, else "" (the column keeps its full name for assistive tech). */
+const shortHour = (label: string) => {
+  const m = label.match(/^(\d+)(:\d+)? (AM|PM)$/);
+  return m && +m[1] % 2 === 0 ? `${m[1]}${m[2] ?? ""}${m[3] === "AM" ? "a" : "p"}` : "";
+};
 
 /**
- * Every hour from now as a dense table: time, knots (wind-scale colour), the range each hour is likely to fall in
- * (SeaSensei), gust, direction and a ride bar; night hours
- * shaded, day names stuck to the left edge. Scrolls sideways (the mouse wheel too, on desktop) and keeps the
- * highlighted hour (the charts' cursor, else the timeline's hour) in view.
+ * Every hour from now as a narrow bar on one fixed scale (0–30 kn), filled with the wind-scale gradient, the gust a
+ * faint tick above it; under each bar a band in the colour contract (a session's hours go and joined into one run,
+ * marginal amber, too light quiet, too strong, wrong direction hatched; none at night, which is dimmed), then the
+ * speed and a downwind arrow. Day names stick to the left edge; each hour's name and tooltip say it all in words
+ * (with SeaSensei's likely range). Scrolls sideways (the mouse wheel too, on desktop), keeps the highlighted hour (the
+ * charts' cursor, else the timeline's) in view, and a tap on an hour puts the one clock there.
  */
 function HourGridImpl({ hours, tz, spot, highlightT }: { hours: Hour[]; tz: string; spot: Spot; highlightT?: number }) {
   const clock = useNow();
+  const canSet = useCanSetAt();
   const start = Math.floor(clock / HOUR) * HOUR;
-  const { lat, lon, min, max, dirC, dirW } = spot;
   const cols = useMemo(() => {
+    const list = sessions(hours, spot);
     const out: Col[] = [];
     for (const h of hours) {
       if (h.t < start) continue;
-      const night = !isDaylightHour(lat, lon, h.t);
-      const r = rideState(h.speed, { min, max, dirC, dirW }, h.dir);
-      const prev = out[out.length - 1];
+      const state: State = isDaylightHour(spot.lat, spot.lon, h.t) ? (hourState(h, spot, list) as State) : "night";
+      const prev = out[out.length - 1], label = fmtHour(h.t, tz), range = fmtRange(h);
       out.push({
-        h, night, now: h.t === start,
-        ride: night ? "night" : r === "good" ? "go" : r,
+        h, state, now: h.t === start, label,
         dayStart: !!prev && dayKey(prev.h.t, tz) !== dayKey(h.t, tz),
+        words: `${h.t === start ? "Now" : label}: ${Math.round(h.speed)} kn${range ? `, likely ${range}` : ""}, gusts ${Math.round(h.gust)}, from ${compass(h.dir)}, ${WORDS[state]}`,
       });
     }
     return out;
-  }, [hours, start, lat, lon, min, max, dirC, dirW, tz]);
+  }, [hours, start, spot, tz]);
 
   const scroller = useRef<HTMLDivElement>(null);
   const hi = highlightT == null || !cols.length ? -1 : cols.findIndex((c) => Math.abs(c.h.t - highlightT) < HOUR / 2);
@@ -71,7 +91,7 @@ function HourGridImpl({ hours, tz, spot, highlightT }: { hours: Hour[]; tz: stri
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el || hi < 0) return;
-    const x = hi * COL, seen0 = el.scrollLeft, seen1 = el.scrollLeft + el.clientWidth - LABEL;
+    const x = hi * COL, seen0 = el.scrollLeft, seen1 = el.scrollLeft + el.clientWidth;
     if (x >= seen0 && x + COL <= seen1) return;
     const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
     el.scrollTo({ left: Math.max(0, x - 2 * COL), behavior: smooth ? "smooth" : "auto" });
@@ -100,21 +120,38 @@ function HourGridImpl({ hours, tz, spot, highlightT }: { hours: Hour[]; tz: stri
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
+  // A tap on an hour puts the one clock there (pointer only: the timeline is the keyboard's way to the same place).
+  const onPick = (e: MouseEvent) => {
+    const t = Number((e.target as Element).closest("[data-t]")?.getAttribute("data-t"));
+    if (canSet && t) requestAt(t <= clock ? null : t);
+  };
+
+  const shown = useMemo(() => KEY.filter((k) => cols.some((c) => c.state === k)), [cols]);
   return (
     <section aria-labelledby="hours-h" className="flex flex-col gap-2">
       <SectionHeader id="hours-h" title="Hour by hour" />
       <div className="overflow-hidden rounded-lg border border-line bg-surface-2">
         <div ref={scroller} tabIndex={0} role="region" aria-label="Hour by hour, scrolls sideways"
-          className="no-scrollbar overflow-x-auto overscroll-x-contain [mask-image:linear-gradient(to_right,#000_calc(100%-20px),transparent)] focus-visible:outline-offset-[-2px]">
-          <div className="relative w-max pb-2">
+          className="no-scrollbar overflow-x-auto overscroll-x-contain [mask-image:linear-gradient(to_right,#000_calc(100%-16px),transparent)] focus-visible:outline-offset-[-2px]">
+          <div className={clsx("relative w-max px-1.5 pb-1", canSet && "cursor-pointer")} onClick={onPick}>
             <HourTable cols={cols} tz={tz} clock={clock} />
             {hi >= 0 && (
-              <div aria-hidden className="pointer-events-none absolute bottom-1.5 top-6 rounded-md bg-accent/[.07] ring-1 ring-inset ring-accent/60"
-                style={{ left: LABEL + hi * COL, width: COL }} />
+              <div aria-hidden className="pointer-events-none absolute bottom-0.5 top-[18px] rounded-md bg-accent/[.07] ring-1 ring-inset ring-accent/70"
+                style={{ left: 6 + hi * COL, width: COL }} />
             )}
           </div>
         </div>
-        <RideKey />
+        <ul aria-label="Colour key" className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-line px-2.5 py-1.5 text-micro text-fg-3">
+          {shown.map((k) => (
+            <li key={k} className="flex items-center gap-1 whitespace-nowrap">
+              <span aria-hidden className={k === "night" ? NIGHT_KEY : clsx("h-1 w-3 rounded-full", BAND[k])} style={k === "wrongdir" ? HATCH : undefined} />
+              {KEY_WORDS[k]}
+            </li>
+          ))}
+          <li className="flex items-center gap-1 whitespace-nowrap">
+            <span aria-hidden className="h-2 w-3 rounded-[2px]" style={swatch(22)} />Gusts
+          </li>
+        </ul>
       </div>
     </section>
   );
@@ -127,77 +164,55 @@ const HourTable = memo(function HourTable({ cols, tz, clock }: { cols: Col[]; tz
     if (!days.length || c.dayStart) days.push({ key: c.h.t, label: dayLabel(c.h.t, tz, clock), n: 0 });
     days[days.length - 1].n++;
   }
-  const ranged = cols.some((c) => c.h.lo != null && c.h.hi != null);
-  const cell = (c: Col) => clsx("p-0", c.dayStart && "border-l border-line-strong", c.night && "bg-ink/35");
+  const edge = (c: Col) => c.dayStart && "border-l border-line-strong";
   return (
-    <table className="table-fixed border-separate border-spacing-0 text-center" style={{ width: LABEL + cols.length * COL }}>
-      <caption className="sr-only">Hour by hour from now: wind{ranged ? ", the range it is likely to fall in," : ""} and gust in knots, direction, and whether each hour is rideable</caption>
-      <colgroup>
-        <col style={{ width: LABEL }} />
-        {cols.map((c) => <col key={c.h.t} style={{ width: COL }} />)}
-      </colgroup>
+    <table className="table-fixed border-separate border-spacing-0 text-center" style={{ width: cols.length * COL }}>
+      <caption className="sr-only">Hour by hour from now: wind and gust in knots, direction, and whether each hour is rideable</caption>
+      <colgroup>{cols.map((c) => <col key={c.h.t} style={{ width: COL }} />)}</colgroup>
       <thead>
-        <tr className="h-6">
-          <td className={STICKY} />
+        <tr className="h-[18px]">
           {days.map((d, i) => (
             <th key={d.key} scope="colgroup" colSpan={d.n} className={clsx("p-0 text-left align-bottom", i > 0 && "border-l border-line-strong")}>
-              <span className="sticky left-[44px] inline-block whitespace-nowrap px-2 text-micro font-semibold text-fg">{d.label}</span>
+              <span className="sticky left-0 inline-block whitespace-nowrap px-1 text-micro font-semibold leading-4 text-fg">{d.label}</span>
             </th>
           ))}
         </tr>
-        <tr className="h-6">
-          <td className={STICKY} />
+        <tr className="h-4">
           {cols.map((c) => (
-            <th key={c.h.t} scope="col" data-t={c.h.t} data-night={c.night || undefined} className={clsx(cell(c), "whitespace-nowrap text-micro font-medium",
-              c.now ? "text-accent" : c.night ? "text-fg-3" : "text-fg-2")}>
-              {c.now ? "Now" : fmtHour(c.h.t, tz)}
+            <th key={c.h.t} scope="col" data-t={c.h.t} data-night={c.state === "night" || undefined} aria-label={c.now ? "Now" : c.label}
+              className={clsx("num whitespace-nowrap p-0 text-[10px] font-medium leading-4", edge(c), c.now ? "text-accent" : "text-fg-3")}>
+              {c.now ? "Now" : shortHour(c.label)}
             </th>
           ))}
         </tr>
       </thead>
       <tbody>
-        <tr className="h-8">
-          <th scope="row" className={clsx(STICKY, "pl-3 text-left text-micro font-medium text-fg-3")}>kn</th>
-          {cols.map((c) => (
-            <td key={c.h.t} className={cell(c)}>
-              {/* the wind colour fills the cell; the number stays light on it (purple and red text on the dark panel fall below 4.5:1) */}
-              <span className={clsx("num mx-[3px] grid h-7 place-items-center rounded-[7px] text-label font-semibold", c.night ? "text-fg-2" : "text-fg")}
-                style={{ background: windColor(c.h.speed, c.night ? 0.16 : 0.32) }}>
-                {Math.round(c.h.speed)}
-              </span>
-            </td>
-          ))}
-        </tr>
-        {ranged && (
-          <tr className="h-5" data-testid="range-row">
-            <th scope="row" className={clsx(STICKY, "pl-3 text-left text-micro font-medium text-fg-3")}>Likely</th>
-            {cols.map((c) => <td key={c.h.t} className={clsx(cell(c), "num whitespace-nowrap text-micro text-fg-3")}>{fmtRange(c.h) ?? ""}</td>)}
-          </tr>
-        )}
-        <tr className="h-6">
-          <th scope="row" className={clsx(STICKY, "pl-3 text-left text-micro font-medium text-fg-3")}>Gust</th>
-          {cols.map((c) => <td key={c.h.t} className={clsx(cell(c), "num text-caption text-fg-2")}>{Math.round(c.h.gust)}</td>)}
-        </tr>
-        <tr className="h-6">
-          <th scope="row" className={clsx(STICKY, "pl-3 text-left text-micro font-medium text-fg-3")}>From</th>
-          {cols.map((c) => (
-            <td key={c.h.t} className={clsx(cell(c), "text-fg-2")}>
-              {/* downwind arrow, like everywhere else; named by the FROM direction */}
-              <svg width="14" height="14" viewBox="0 0 24 24" role="img" aria-label={compass(c.h.dir)} className="mx-auto" style={{ transform: `rotate(${c.h.dir + 180}deg)` }}>
-                <path d="M12 3 L18 19 L12 15.5 L6 19 Z" fill="currentColor" />
-              </svg>
-            </td>
-          ))}
-        </tr>
-        <tr className="h-5">
-          <th scope="row" className={clsx(STICKY, "pl-3 text-left text-micro font-medium text-fg-3")}>Ride</th>
+        <tr>
           {cols.map((c, i) => {
-            const prev = cols[i - 1]?.ride, next = cols[i + 1]?.ride;
+            const night = c.state === "night";
+            const prev = cols[i - 1]?.state, next = cols[i + 1]?.state;
+            const joinL = prev === c.state && !c.dayStart, joinR = next === c.state && !cols[i + 1]?.dayStart;
             return (
-              <td key={c.h.t} className={cell(c)}>
-                <span aria-hidden data-ride={c.ride} style={c.ride === "offdir" ? HATCH : undefined}
-                  className={clsx("block h-1.5", RIDE_FILL[c.ride], prev === c.ride ? "ml-0" : "ml-[3px] rounded-l-full", next === c.ride ? "mr-0" : "mr-[3px] rounded-r-full")} />
-                <span className="sr-only">{RIDE_WORDS[c.ride]}</span>
+              <td key={c.h.t} data-t={c.h.t} data-ride={c.state} title={c.words} className={clsx("p-0 align-bottom", edge(c), night && "bg-ink/50")}>
+                <span className="sr-only">{c.words}</span>
+                <span aria-hidden className="flex flex-col">
+                  <span className={clsx("flex flex-col", night && "opacity-45")}>
+                    {/* the bar: as tall as the wind, in its colour, the speed on top and the (downwind) arrow inside */}
+                    <span className="flex flex-col justify-end" style={{ height: PLOT + HEAD }}>
+                      <span className="num text-center text-caption font-bold leading-[15px] text-fg">{Math.round(c.h.speed)}</span>
+                      <span data-bar="" className="mx-px flex justify-center rounded-t-[3px] pt-[3px]" style={{ height: barPx(c.h.speed), ...swatch(c.h.speed) }}>
+                        <svg width="10" height="10" viewBox="0 0 24 24" style={{ transform: `rotate(${c.h.dir + 180}deg)` }}>
+                          <path d="M12 3 L18 19 L12 15.5 L6 19 Z" fill="currentColor" />
+                        </svg>
+                      </span>
+                    </span>
+                    {/* the gust: a cell in its own colour */}
+                    <span className="num mx-px mt-px text-center text-[10px] font-semibold leading-[18px]" style={swatch(c.h.gust)}>{Math.round(c.h.gust)}</span>
+                  </span>
+                  <span data-band={c.state} style={c.state === "wrongdir" ? HATCH : undefined}
+                    className={clsx("mt-[3px] block h-[3px]", BAND[c.state],
+                      joinL ? "ml-0" : "ml-px rounded-l-full", joinR ? "mr-0" : "mr-px rounded-r-full")} />
+                </span>
               </td>
             );
           })}
@@ -207,27 +222,12 @@ const HourTable = memo(function HourTable({ cols, tz, clock }: { cols: Col[]; tz
   );
 });
 
-/** The ride row's key, under the grid: every state it can show, in the words the rest of the app uses. */
-function RideKey() {
-  const keys: Ride[] = ["go", "offdir", "below", "above", "night"];
-  return (
-    <ul aria-label="The ride row" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-3 py-2 text-micro text-fg-3">
-      {keys.map((k) => (
-        <li key={k} className="flex items-center gap-1.5 whitespace-nowrap">
-          <span aria-hidden className={clsx("h-1.5 w-3 rounded-full", RIDE_FILL[k])} style={k === "offdir" ? HATCH : undefined} />
-          {RIDE_WORDS[k][0].toUpperCase() + RIDE_WORDS[k].slice(1)}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 /** Holds the grid's place (same height) while the forecast loads. */
 function Placeholder() {
   return (
     <div className="flex flex-col gap-2" aria-hidden>
       <div className="flex min-h-6 items-center px-1"><Skeleton className="h-4 w-24" /></div>
-      <Skeleton className="h-[211px] rounded-lg" />
+      <Skeleton className="h-[180px] rounded-lg" />
     </div>
   );
 }

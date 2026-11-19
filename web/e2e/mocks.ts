@@ -28,8 +28,8 @@ function hourlyTimes(hrrrOnly = false) {
  */
 export type MockOptions = {
   sea?: number;
-  /** Every model's wind direction (FROM, degrees) instead of the default SW (225). */
-  dir?: number;
+  /** Every model's wind direction (FROM, degrees; or per hour, `t` in seconds) instead of the default SW (225). */
+  dir?: number | ((t: number) => number);
   /** Active NWS alerts (api.weather.gov features, see `alertFeature`). None by default. */
   alerts?: unknown[];
 };
@@ -65,7 +65,7 @@ function locationPayload(url: URL, lat: number, lon: number, i: number, opts: Mo
   const sea = q.get("cell_selection") === "sea" ? opts.sea ?? 0 : 0;
   if (hourly.includes("wind_speed_10m")) add("wind_speed_10m", (t, m) => speedAt(t) + (bias[m] ?? 0) + sea);
   if (hourly.includes("wind_gusts_10m")) add("wind_gusts_10m", (t, m) => speedAt(t) + 4 + (bias[m] ?? 0) + sea);
-  if (hourly.includes("wind_direction_10m")) add("wind_direction_10m", () => opts.dir ?? dirAt());
+  if (hourly.includes("wind_direction_10m")) add("wind_direction_10m", (t) => (typeof opts.dir === "function" ? opts.dir(t) : opts.dir ?? dirAt()));
   return { latitude: lat, longitude: lon, timezone: "America/New_York", utc_offset_seconds: -14400, hourly: out };
 }
 
