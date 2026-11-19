@@ -1,4 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import crypto from "node:crypto";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -81,6 +83,13 @@ type Stubs = {
   failPuts: { match: RegExp; left: number } | null; refused: number;
   /** Old Port Tampa's sensor is frozen at 0.0 kn from 066°, and the airport reports a calm. */
   frozen: boolean;
+  /** The morning briefing: a spot's forecast (the app's two requests) as wind at a place and time; null = calm. */
+  spotWind: (lat: number, lon: number, t: number) => { speed: number; dir: number } | null;
+  spotTz: string; spotAsks: URLSearchParams[];
+  /** Marine alerts for /alerts/active?point= (GeoJSON features). */
+  alerts: unknown[];
+  /** The stand-in push service: what it was sent, and what it answers per path (default 201). */
+  pushes: { path: string; headers: http.IncomingHttpHeaders; body: Buffer }[]; pushStatus: Record<string, number>;
 };
 const DATASET: Record<string, string> = { gfs_hrrr: "ncep_hrrr_conus", gfs_global: "ncep_gfs013" };
 // The stand-in Open-Meteo's current run per dataset (unix seconds). 01Z NBM isn't a 3-hourly run, so it's skipped.
@@ -113,6 +122,7 @@ async function startStubs(): Promise<Stubs> {
   const stubs = {
     calls: [] as Anthropic[], failNhc: false, leakFirst: false, runs: initialRuns(), puts: [] as Put[], metaHits: 0, archiveAsks: [] as URLSearchParams[],
     objects: new Map(), metaQueue: {}, dataRuns: {}, failPuts: null, refused: 0, frozen: false,
+    spotWind: () => null, spotTz: TZ, spotAsks: [], alerts: [], pushes: [], pushStatus: {},
   } as unknown as Stubs;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url!, "http://x");
@@ -137,6 +147,29 @@ async function startStubs(): Promise<Stubs> {
       const keys = [...stubs.objects.keys()].filter((k) => k.startsWith(prefix)).sort();
       res.writeHead(200, { "content-type": "application/xml" });
       return res.end(`<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><IsTruncated>false</IsTruncated>${keys.map((k) => `<Contents><Key>${k.slice("/kite-archive/".length)}</Key></Contents>`).join("")}</ListBucketResult>`);
+    }
+    if (req.method === "DELETE" && p.startsWith("/kite-archive/")) { stubs.objects.delete(p); res.writeHead(204); return res.end(); }
+    // A push service: keeps each push, answers 201 (or what the test set for that path)
+    if (req.method === "POST" && p.startsWith("/push/")) {
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => { stubs.pushes.push({ path: p, headers: req.headers, body: Buffer.concat(chunks) }); res.writeHead(stubs.pushStatus[p] ?? 201); res.end(); });
+      return;
+    }
+    // A spot's forecast, as the app (and the briefing) asks for it: several models, one point, the spot's own time zone
+    if (p === "/v1/forecast" && url.searchParams.get("timezone") === "auto") {
+      stubs.spotAsks.push(url.searchParams);
+      const lat = +url.searchParams.get("latitude")!, lon = +url.searchParams.get("longitude")!;
+      const start = Math.floor(Date.now() / 3600e3) * 3600 - 24 * 3600;
+      const time = Array.from({ length: 8 * 24 }, (_, i) => start + i * 3600);
+      const wind = time.map((t) => stubs.spotWind(lat, lon, t * 1000) ?? { speed: 5, dir: 90 });
+      const hourly: Record<string, number[]> = { time };
+      for (const m of url.searchParams.get("models")!.split(",")) {
+        hourly[`wind_speed_10m_${m}`] = wind.map((w) => w.speed);
+        hourly[`wind_gusts_10m_${m}`] = wind.map((w) => Math.round(w.speed * 1.3));
+        hourly[`wind_direction_10m_${m}`] = wind.map((w) => w.dir);
+      }
+      return send(200, { latitude: lat, longitude: lon, timezone: stubs.spotTz, hourly });
     }
     if (p.startsWith("/kite-archive/")) {
       const body = stubs.objects.get(p);
@@ -214,6 +247,7 @@ async function startStubs(): Promise<Stubs> {
     }
     const prod = p.match(/^\/products\/(\w+)$/);
     if (prod && PRODUCTS[prod[1]]) return send(200, { id: prod[1], issuanceTime: "2026-09-29T12:31:00+00:00", productText: PRODUCTS[prod[1]].text });
+    if (p === "/alerts/active" && url.searchParams.get("point")) return send(200, { type: "FeatureCollection", features: stubs.alerts });
     if (p === "/alerts/active") return send(200, { "@graph": [] });
 
     if (p === "/v1/forecast") {
@@ -854,4 +888,251 @@ test("without an API key nothing is generated and the API says so; bad dates are
     expect(await raw("//")).toBe(400);
     expect((await fetch(`${app.base}/healthz`)).status).toBe(200);
   } finally { await app.stop(); await stubs.close(); }
+});
+
+/* ---------------- the morning briefing (Web Push) ---------------- */
+
+const webDir = fileURLToPath(new URL("..", import.meta.url));
+// The server speaks with the app's own engine (server/engine.mjs, bundled from src/lib): build it from the source under test.
+test.beforeAll(() => { execFileSync(process.execPath, ["scripts/build-engine.mjs"], { cwd: webDir }); });
+
+const ece = createRequire(path.join(serverDir, "package.json"))("http_ece") as { decrypt: (b: Buffer, p: object) => Buffer };
+
+/** A browser's push subscription: real P-256 keys, so the server can encrypt for it and the test can read what it sent. */
+function subscriber(endpoint: string) {
+  const ecdh = crypto.createECDH("prime256v1");
+  ecdh.generateKeys();
+  const auth = crypto.randomBytes(16);
+  return {
+    subscription: { endpoint, expirationTime: null, keys: { p256dh: ecdh.getPublicKey().toString("base64url"), auth: auth.toString("base64url") } },
+    read: (body: Buffer) => JSON.parse(ece.decrypt(body, { version: "aes128gcm", privateKey: ecdh, authSecret: auth }).toString()),
+  };
+}
+
+/**
+ * Somewhere it's about 7 AM right now (a whole-hour zone, the longitude its clock keeps), so "today" has a daylight
+ * afternoon ahead whatever time the tests run. `at(h)` is today's h o'clock there.
+ */
+function morningPlace(now = Date.now()) {
+  const utc = now / 3600e3;
+  let off = Math.round(7 - (utc % 24));
+  if (off < -12) off += 24;
+  const tz = off === 0 ? "Etc/GMT" : `Etc/GMT${off > 0 ? "-" : "+"}${Math.abs(off)}`; // Etc/GMT-3 is UTC+3
+  const localMidnight = Math.floor((now + off * 3600e3) / 864e5) * 864e5 - off * 3600e3;
+  const clock = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(now);
+  return { tz, lon: Math.max(-179.5, off * 15), at: (h: number) => localMidnight + h * 3600e3, clock, date };
+}
+
+const spot = (id: string, name: string, lat: number, lon: number, over: Record<string, unknown> = {}) => ({ id, name, lat, lon, min: 15, max: 30, ...over });
+const post = (base: string, p: string, body: unknown, headers: Record<string, string> = {}) =>
+  fetch(`${base}${p}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
+const pushStatus = async (base: string) => (await (await fetch(`${base}/api/push/status`)).json()) as any;
+
+/** Fort De Soto blows 20 kn SW from noon to 4 PM; Picnic Island 15 kn SW (its minimum) from 2 to 4 PM; everywhere else (and every other day) 5 kn. */
+function windyDay(stubs: Stubs, place: ReturnType<typeof morningPlace>) {
+  stubs.spotTz = place.tz;
+  stubs.spotWind = (lat, _lon, t) => {
+    if (lat === 27.64 && t >= place.at(12) && t < place.at(16)) return { speed: 20, dir: 225 };
+    if (lat === 27.853 && t >= place.at(14) && t < place.at(16)) return { speed: 15, dir: 225 };
+    return null;
+  };
+}
+
+const QUIET = { ANTHROPIC_API_KEY: "", ARCHIVE_BOOT_DELAY_MS: "100000000", LEARN_BOOT_DELAY_MS: "100000000" };
+
+test("briefing subscriptions are checked strictly: push-service endpoints only, real keys, sane spots, a real zone, small bodies", async () => {
+  const stubs = await startStubs();
+  const app = await startServer(stubs, { ...QUIET, BRIEFING_BOOT_DELAY_MS: "100000000", PUSH_RATE_LIMIT: "40" });
+  try {
+    const key = await (await fetch(`${app.base}/api/push/key`)).json();
+    expect(Buffer.from(key.publicKey, "base64url")).toHaveLength(65); // an uncompressed P-256 point
+    const ok = subscriber("https://fcm.googleapis.com/fcm/send/abc123");
+    const good = { subscription: ok.subscription, spots: [spot("seed-fort-de-soto", "Fort De Soto", 27.64, -82.739)], time: "07:00", timeZone: "America/New_York", mode: "daily", model: "sensei" };
+    const bad: [string, unknown, number, string?][] = [
+      ["http endpoint", { ...good, subscription: { ...ok.subscription, endpoint: "http://fcm.googleapis.com/fcm/send/abc" } }, 400, "bad_endpoint"],
+      ["not a push service", { ...good, subscription: { ...ok.subscription, endpoint: "https://169.254.169.254/latest/meta-data" } }, 400, "bad_endpoint"],
+      ["lookalike host", { ...good, subscription: { ...ok.subscription, endpoint: "https://fcm.googleapis.com.evil.test/x" } }, 400, "bad_endpoint"],
+      ["no keys", { ...good, subscription: { endpoint: ok.subscription.endpoint } }, 400, "bad_keys"],
+      ["short auth", { ...good, subscription: { ...ok.subscription, keys: { ...ok.subscription.keys, auth: "AAAA" } } }, 400, "bad_keys"],
+      ["no spots", { ...good, spots: [] }, 400, "bad_spots"],
+      ["13 spots", { ...good, spots: Array.from({ length: 13 }, (_, i) => spot(`s${i}`, `S${i}`, 27, -82)) }, 400, "bad_spots"],
+      ["latitude 120", { ...good, spots: [spot("x", "X", 120, -82)] }, 400, "bad_spots"],
+      ["max below min", { ...good, spots: [spot("x", "X", 27, -82, { min: 20, max: 10 })] }, 400, "bad_spots"],
+      ["a string for knots", { ...good, spots: [spot("x", "X", 27, -82, { min: "15" })] }, 400, "bad_spots"],
+      ["25:00", { ...good, time: "25:00" }, 400, "bad_time"],
+      ["7am", { ...good, time: "7am" }, 400, "bad_time"],
+      ["made-up zone", { ...good, timeZone: "Mars/Olympus_Mons" }, 400, "bad_zone"],
+      ["path in zone", { ...good, timeZone: "../../etc" }, 400, "bad_zone"],
+      ["unknown mode", { ...good, mode: "hourly" }, 400, "bad_mode"],
+      ["unknown model", { ...good, model: "icon" }, 400, "bad_model"],
+      ["not JSON", "{nope", 400, "bad_json"],
+      ["over 16 KB", { ...good, pad: "x".repeat(17 * 1024) }, 413, "too_large"],
+    ];
+    for (const [why, body, code, error] of bad) {
+      const r = await post(app.base, "/api/push/subscribe", body);
+      expect(r.status, why).toBe(code);
+      if (error) expect((await r.json()).error, why).toBe(error);
+    }
+    expect((await post(app.base, "/api/push/subscribe", good, { origin: "https://evil.test" })).status).toBe(403); // another site's page
+    expect((await fetch(`${app.base}/api/push/subscribe`)).status).toBe(405);
+    expect((await pushStatus(app.base)).subscribers).toBe(0);
+
+    const r = await post(app.base, "/api/push/subscribe", good);
+    expect(r.status).toBe(200);
+    const res = await r.json();
+    expect(res).toMatchObject({ ok: true, status: "created" });
+    expect(new Date(res.next).getTime()).toBeGreaterThan(Date.now()); // the next 7:00 AM in New York
+    expect(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }).format(new Date(res.next))).toBe("7:00 AM");
+    // upsert by endpoint: a second post updates the same one
+    expect(await (await post(app.base, "/api/push/subscribe", { ...good, time: "06:30" })).json()).toMatchObject({ status: "updated" });
+    const files = fs.readdirSync(path.join(app.dataDir, "push", "subs"));
+    expect(files).toEqual([`${crypto.createHash("sha256").update(ok.subscription.endpoint).digest("hex")}.json`]);
+    expect(JSON.parse(fs.readFileSync(path.join(app.dataDir, "push", "subs", files[0]), "utf8"))).toMatchObject({ time: "06:30", lastSentDate: null });
+    // the status says how many, never who or where
+    const st = await pushStatus(app.base);
+    expect(st).toMatchObject({ available: true, subscribers: 1, keys: { ready: true, source: "data_dir" } });
+    expect(JSON.stringify(st)).not.toMatch(/fcm|27\.64|Fort/);
+    expect(JSON.stringify(st)).not.toContain(JSON.parse(fs.readFileSync(path.join(app.dataDir, "push", "vapid.json"), "utf8")).privateKey);
+
+    expect(await (await post(app.base, "/api/push/unsubscribe", { endpoint: ok.subscription.endpoint })).json()).toMatchObject({ removed: true });
+    expect((await pushStatus(app.base)).subscribers).toBe(0);
+    expect(fs.readdirSync(path.join(app.dataDir, "push", "subs"))).toEqual([]);
+
+    // a simple per-IP limit on subscribe/unsubscribe
+    const codes: number[] = [];
+    for (let i = 0; i < 25; i++) codes.push((await post(app.base, "/api/push/unsubscribe", { endpoint: "https://fcm.googleapis.com/x" })).status);
+    expect(codes).toContain(429);
+    expect(app.logs()).not.toContain(ok.subscription.endpoint);
+  } finally { await app.stop(); await stubs.close(); }
+});
+
+test("each due subscription gets one briefing a day at its local time; 'only when it's on' skips a calm day; a 410 unsubscribes", async () => {
+  const stubs = await startStubs();
+  const place = morningPlace();
+  windyDay(stubs, place);
+  const app = await startServer(stubs, { ...QUIET, BRIEFING_BOOT_DELAY_MS: "100", BRIEFING_CHECK_MS: "300", PUSH_TEST_ENDPOINT_PREFIX: `${stubs.url}/push/` });
+  try {
+    const fds = spot("seed-fort-de-soto", "Fort De Soto", 27.64, place.lon), calm = spot("calm", "Calm Cove", 27.2, place.lon);
+    const base = { time: place.clock, timeZone: place.tz, mode: "daily", model: "sensei" };
+    const rider = subscriber(`${stubs.url}/push/rider`), quiet = subscriber(`${stubs.url}/push/quiet`), gone = subscriber(`${stubs.url}/push/gone`);
+    const later = subscriber(`${stubs.url}/push/later`);
+    stubs.pushStatus["/push/gone"] = 410;
+    for (const [s, over] of [[rider, { spots: [fds, calm] }], [quiet, { spots: [calm], mode: "windy" }], [gone, { spots: [fds] }],
+      // due in an hour, not now
+      [later, { spots: [fds], time: new Intl.DateTimeFormat("en-GB", { timeZone: place.tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(Date.now() + 3600e3) }]] as const)
+      expect((await post(app.base, "/api/push/subscribe", { ...base, ...over, subscription: s.subscription })).status).toBe(200);
+
+    await expect.poll(async () => (await pushStatus(app.base)).pruned, { timeout: 15_000 }).toBe(1);
+    await expect.poll(() => stubs.pushes.filter((p) => p.path === "/push/rider").length, { timeout: 15_000 }).toBe(1);
+    await new Promise((r) => setTimeout(r, 1500)); // several more cycles
+    expect(stubs.pushes.map((p) => p.path).sort()).toEqual(["/push/gone", "/push/rider"]); // once each; nothing to the calm or the later one
+
+    const sent = stubs.pushes.find((p) => p.path === "/push/rider")!;
+    expect(sent.headers.ttl).toBe("10800");
+    expect(sent.headers.urgency).toBe("normal");
+    expect(sent.headers.topic).toBe("morning-briefing");
+    expect(sent.headers["content-encoding"]).toBe("aes128gcm");
+    const key = (await (await fetch(`${app.base}/api/push/key`)).json()).publicKey;
+    expect(sent.headers.authorization).toMatch(new RegExp(`^vapid t=[\\w-]+\\.[\\w-]+\\.[\\w-]+, k=${key}$`));
+    const msg = rider.read(sent.body);
+    expect(msg).toMatchObject({ title: "Fort De Soto · On at 12 PM", url: "/?spot=seed-fort-de-soto", tag: "morning-briefing" });
+    expect(msg.body).toMatch(/^12–4 PM · \d+–\d+ kn SW · Likely\.$/);
+
+    const st = await pushStatus(app.base);
+    expect(st).toMatchObject({ subscribers: 3, sent: 1, pruned: 1, skipped: 1, failed: 0 });
+    // the app's two requests per place, shared by everyone and cached: two places, four calls in all
+    expect(st.calls.total).toBe(4);
+    expect(stubs.spotAsks.map((q) => q.get("cell_selection") ?? "default").sort()).toEqual(["default", "default", "sea", "sea"]);
+    const doc = (s: ReturnType<typeof subscriber>) => JSON.parse(fs.readFileSync(path.join(app.dataDir, "push", "subs", `${crypto.createHash("sha256").update(s.subscription.endpoint).digest("hex")}.json`), "utf8"));
+    expect(doc(rider)).toMatchObject({ lastSentDate: place.date, lastResult: { result: "sent", status: 201 } });
+    expect(doc(quiet)).toMatchObject({ lastSentDate: place.date, lastResult: { result: "skipped" } });
+    expect(doc(later).lastSentDate).toBeNull();
+    expect(() => doc(gone)).toThrow(); // deleted
+
+    // a later re-post (the rider edited a spot) keeps today's as sent
+    expect((await post(app.base, "/api/push/subscribe", { ...base, spots: [fds], subscription: rider.subscription })).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(stubs.pushes.filter((p) => p.path === "/push/rider")).toHaveLength(1);
+  } finally { await app.stop(); await stubs.close(); }
+});
+
+test("the admin dry run shows the briefing the app's engine writes: spot, time, range, chance, the others today and a marine alert", async () => {
+  const stubs = await startStubs();
+  const place = morningPlace();
+  windyDay(stubs, place);
+  stubs.alerts = [{ properties: { id: "a1", event: "Small Craft Advisory", status: "Actual", messageType: "Alert", headline: "SCA", ends: new Date(place.at(22)).toISOString() } },
+    { properties: { id: "a2", event: "Flood Watch", status: "Actual", messageType: "Alert", ends: new Date(place.at(22)).toISOString() } }]; // not marine: ignored
+  const app = await startServer(stubs, { ...QUIET, BRIEFING_BOOT_DELAY_MS: "100000000", DISCUSSION_ADMIN_TOKEN: "s3cret", PUSH_TEST_ENDPOINT_PREFIX: `${stubs.url}/push/` });
+  try {
+    const rider = subscriber(`${stubs.url}/push/rider`);
+    const spots = [spot("calm", "Calm Cove", 27.2, place.lon), spot("pi", "Picnic Island", 27.853, place.lon), spot("seed-fort-de-soto", "Fort De Soto", 27.64, place.lon)];
+    expect((await post(app.base, "/api/push/subscribe", { subscription: rider.subscription, spots, time: "07:00", timeZone: place.tz, mode: "windy" })).status).toBe(200);
+
+    expect((await post(app.base, "/api/push/send-now?dry=1", {})).status).toBe(401);
+    expect((await post(app.base, "/api/push/send-now?dry=1", {}, { authorization: "Bearer nope" })).status).toBe(401);
+    const auth = { authorization: "Bearer s3cret" };
+    expect((await post(app.base, `/api/push/send-now?dry=1&endpoint=${encodeURIComponent(`${stubs.url}/push/nobody`)}`, {}, auth)).status).toBe(404);
+    const dry = await (await post(app.base, `/api/push/send-now?dry=1&endpoint=${encodeURIComponent(rider.subscription.endpoint)}`, {}, auth)).json();
+    expect(dry).toMatchObject({ dry: true, count: 1 });
+    const b = dry.results[0].briefing;
+    expect(dry.results[0].wouldSend).toBe(true);
+    expect(b.title).toBe("Fort De Soto · On at 12 PM");
+    // 20 kn from every model, the plain seed's range (−2.4/+2.6 kn at short lead): 18–23 kn
+    expect(b.body).toBe("12–4 PM · 18–23 kn SW · Likely. Also Picnic Island 2–4 PM (Possible).\nSmall Craft Advisory until 10 PM.");
+    expect(b.url).toBe("/?spot=seed-fort-de-soto");
+    expect(b.spots.map((s: any) => [s.id, s.state])).toEqual([["seed-fort-de-soto", "today"], ["pi", "today"], ["calm", "none"]]);
+    expect(stubs.pushes).toHaveLength(0); // a dry run sends nothing
+
+    // a raw model leads: the board's raw-model copy (mean to peak, no chance word)
+    expect((await post(app.base, "/api/push/subscribe", { subscription: rider.subscription, spots: [spots[2]], time: "07:00", timeZone: place.tz, model: "gfs" })).status).toBe(200);
+    const raw = (await (await post(app.base, "/api/push/send-now?dry=1", {}, auth)).json()).results[0].briefing;
+    expect(raw.body).toBe("12–4 PM · 20 kn SW.\nSmall Craft Advisory until 10 PM.");
+
+    // a calm week: the next session elsewhere, else nothing this week
+    stubs.spotWind = (lat, _lon, t) => (lat === 27.853 && t >= place.at(24 + 24 + 11) && t < place.at(24 + 24 + 14) ? { speed: 22, dir: 225 } : null);
+    stubs.alerts = [];
+    // (cached forecasts: a fresh server sees the new weather)
+  } finally { await app.stop(); }
+  const next = await startServer(stubs, { ...QUIET, BRIEFING_BOOT_DELAY_MS: "100000000", DISCUSSION_ADMIN_TOKEN: "s3cret", PUSH_TEST_ENDPOINT_PREFIX: `${stubs.url}/push/` });
+  try {
+    const rider = subscriber(`${stubs.url}/push/rider2`);
+    const spots = [spot("seed-fort-de-soto", "Fort De Soto", 27.64, place.lon), spot("pi", "Picnic Island", 27.853, place.lon)];
+    expect((await post(next.base, "/api/push/subscribe", { subscription: rider.subscription, spots, time: "07:00", timeZone: place.tz })).status).toBe(200);
+    const day = new Intl.DateTimeFormat("en-US", { timeZone: place.tz, weekday: "short" }).format(place.at(48 + 11));
+    const res = await (await post(next.base, "/api/push/send-now?dry=1", {}, { authorization: "Bearer s3cret" })).json();
+    expect(res.results[0].briefing).toMatchObject({ title: "No session today", url: "/?spot=pi", on: false });
+    expect(res.results[0].briefing.body).toMatch(new RegExp(`^Next: ${day} 11 AM at Picnic Island \\((Likely|Possible)\\)\\.$`));
+    // not a dry run: it goes out now, and doesn't count as today's
+    const sent = await (await post(next.base, "/api/push/send-now", {}, { authorization: "Bearer s3cret" })).json();
+    expect(sent.results[0].status).toBe(201);
+    expect(rider.read(stubs.pushes[0].body).title).toBe("No session today");
+  } finally { await next.stop(); await stubs.close(); }
+});
+
+test("VAPID keys are made once and kept in R2, so a redeploy keeps every subscription working", async () => {
+  const stubs = await startStubs();
+  const env = { ...R2, R2_ENDPOINT: stubs.url, ...QUIET, BRIEFING_BOOT_DELAY_MS: "100000000", PUSH_TEST_ENDPOINT_PREFIX: `${stubs.url}/push/` };
+  const first = await startServer(stubs, env);
+  let key: string;
+  const rider = subscriber(`${stubs.url}/push/rider`);
+  try {
+    key = (await (await fetch(`${first.base}/api/push/key`)).json()).publicKey;
+    const saved = JSON.parse(stubs.objects.get("/kite-archive/push/v1/vapid.json")!.toString());
+    expect(saved.publicKey).toBe(key);
+    expect(Buffer.from(saved.privateKey, "base64url")).toHaveLength(32);
+    expect(stubs.puts.find((p) => p.path.endsWith("vapid.json"))!.headers["if-none-match"]).toBe("*"); // never overwrites keys another container made
+    expect(first.logs()).not.toContain(saved.privateKey);
+    expect((await post(first.base, "/api/push/subscribe", { subscription: rider.subscription, spots: [spot("a", "A", 27.6, -82.7)], time: "07:00", timeZone: "America/New_York" })).status).toBe(200);
+    expect([...stubs.objects.keys()].filter((k) => k.includes("/push/v1/subs/"))).toHaveLength(1);
+  } finally { await first.stop(); }
+  const second = await startServer(stubs, env); // a new container, a fresh disk
+  try {
+    expect((await (await fetch(`${second.base}/api/push/key`)).json()).publicKey).toBe(key!);
+    expect(stubs.puts.filter((p) => p.path.endsWith("vapid.json"))).toHaveLength(1);
+    await expect.poll(async () => (await pushStatus(second.base)).subscribers).toBe(1);
+    expect((await pushStatus(second.base)).keys.source).toBe("r2");
+    expect(await (await post(second.base, "/api/push/unsubscribe", { endpoint: rider.subscription.endpoint })).json()).toMatchObject({ removed: true });
+    expect([...stubs.objects.keys()].filter((k) => k.includes("/push/v1/subs/"))).toHaveLength(0);
+  } finally { await second.stop(); await stubs.close(); }
 });

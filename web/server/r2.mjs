@@ -17,8 +17,8 @@ function call(pathAndQuery, init = {}, timeout = 60_000) {
   return client.fetch(`${endpoint}/${process.env.R2_BUCKET}${pathAndQuery}`, { ...init, signal: AbortSignal.timeout(timeout) });
 }
 
-export async function put(key, body, type = "application/gzip") {
-  const r = await call(`/${key}`, { method: "PUT", body, headers: { "Content-Type": type } });
+export async function put(key, body, type = "application/gzip", headers = {}) {
+  const r = await call(`/${key}`, { method: "PUT", body, headers: { "Content-Type": type, ...headers } });
   if (!r.ok) throw new Error(`R2 PUT ${key} → HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
 }
 
@@ -28,6 +28,13 @@ export async function get(key) {
   if (r.status === 404) { await r.arrayBuffer().catch(() => {}); return null; }
   if (!r.ok) throw new Error(`R2 GET ${key} → HTTP ${r.status}`);
   return Buffer.from(await r.arrayBuffer());
+}
+
+/** Delete an object (a missing one is fine). */
+export async function del(key) {
+  const r = await call(`/${key}`, { method: "DELETE" });
+  await r.arrayBuffer().catch(() => {});
+  if (!r.ok && r.status !== 404) throw new Error(`R2 DELETE ${key} → HTTP ${r.status}`);
 }
 
 /** Every key under a prefix (ListObjectsV2, following continuation tokens). */

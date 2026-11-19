@@ -1,7 +1,8 @@
 // SeaSensei's server: the built app (dist/), the daily wind discussion (JSON API, archive, RSS) and the
-// scheduler that writes it, the forecast-run archive (archive.mjs, to R2), the station observations (observe.mjs)
-// and the learning that turns the two into /api/calibration (calibrate.mjs). No framework; Node core only,
-// plus the Anthropic SDK in discussion.mjs and aws4fetch (R2 request signing) in r2.mjs.
+// scheduler that writes it, the forecast-run archive (archive.mjs, to R2), the station observations (observe.mjs),
+// the learning that turns the two into /api/calibration (calibrate.mjs) and the morning briefing push (briefing.mjs,
+// push.mjs). No framework; Node core only, plus the Anthropic SDK in discussion.mjs, aws4fetch (R2 request signing)
+// in r2.mjs and web-push (encryption and VAPID) in push.mjs.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -13,6 +14,7 @@ import * as store from "./store.mjs";
 import * as archive from "./archive.mjs";
 import * as observe from "./observe.mjs";
 import * as calibrate from "./calibrate.mjs";
+import * as briefing from "./briefing.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(process.env.DIST_DIR ?? path.join(here, "..", "dist"));
@@ -96,11 +98,17 @@ const safeEqual = (a, b) => {
   return crypto.timingSafeEqual(x, y);
 };
 
+/** The owner's bearer token (DISCUSSION_ADMIN_TOKEN): true when it's right, else it answers (404 off, 401 wrong) and returns false. */
+function admin(req, res) {
+  if (!ADMIN_TOKEN) { sendJson(res, 404, { error: "disabled" }); return false; }
+  const given = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+  if (!safeEqual(given, ADMIN_TOKEN)) { sendJson(res, 401, { error: "unauthorized" }); return false; }
+  return true;
+}
+
 /** Regenerate on demand. Off unless DISCUSSION_ADMIN_TOKEN is set; the scheduler needs none of this. */
 async function handleGenerate(req, res) {
-  if (!ADMIN_TOKEN) return sendJson(res, 404, { error: "disabled" });
-  const given = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
-  if (!safeEqual(given, ADMIN_TOKEN)) return sendJson(res, 401, { error: "unauthorized" });
+  if (!admin(req, res)) return;
   try {
     const force = new URL(req.url, "http://x").searchParams.get("force") === "1";
     const { status: outcome, discussion } = await publish({ force });
@@ -137,6 +145,7 @@ function route(req, res) {
     if (req.method !== "POST") { res.writeHead(405, { Allow: "POST" }); return res.end(); }
     return handleGenerate(req, res);
   }
+  if (briefing.handle(req, res, url, admin)) return;
   if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405); return res.end(); }
   if (p === "/api/discussion") return handleDiscussion(url, res);
   if (p === "/api/discussions") return sendJson(res, 200, { items: store.list(), ...meta() }, "public, max-age=300");
@@ -166,4 +175,5 @@ server.listen(PORT, () => {
   startScheduler();
   archive.startArchive();
   calibrate.startLearning();
+  briefing.startBriefings();
 });
