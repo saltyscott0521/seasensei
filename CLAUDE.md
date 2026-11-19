@@ -27,8 +27,8 @@ Software WebGL makes runs slow: use `--trace off --workers=2`. Don't edit `src/`
   surfaces (`bg-surface-1/2/3`), text (`text-fg`, `-fg-2`, `-fg-3`: the faintest allowed), `accent`, verdict colours
   (`go`, `soon`, `off`, `strong`, `wrongdir`), radii, type sizes (`text-micro` … `text-display`). Colour is data: chrome is neutral;
   only the wind scale, verdicts and the accent carry colour. The wind scale (`windColor`/`windGradient`/`windStops` in `lib/wind.ts`, used by
-  everything: particles, markers, strip, hour grid, charts, legend) runs grey (0–8 kn) → green (~12–18) → blue (~20–24) → violet (~26–30)
-  → deep purple-magenta (35+); its green leans yellow so it never reads as the emerald `go` (`spot.spec.ts` checks the hues). Use the primitives (Button, IconButton, Chip, Card, Segmented,
+  everything: particles, markers, strip, hour grid, charts, legend) runs grey (0–8 kn) → green (~12–18) → blue (20–25) → purple (26–29)
+  → deep purple-magenta (30+); its green leans yellow so it never reads as the emerald `go` (`spot.spec.ts` checks the hues). Use the primitives (Button, IconButton, Chip, Card, Segmented,
   VerdictPill, ConfidenceDots, Ribbon, …) instead of ad-hoc `text-white/NN`. `.num` is Geist with tabular figures (no mono).
 - **Motion** (`src/lib/motion.ts`): duration/spring/ease tokens; `<MotionConfig reducedMotion="user">` wraps the app. Animate
   opacity/transform only, never `x` inside a scroll container; charts draw in once; rotations take the shortest path.
