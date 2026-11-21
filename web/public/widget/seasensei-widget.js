@@ -4,12 +4,14 @@
 // SeaSensei's forecast at the station: one bar per hour, the past 6 h dimmed and the next 24 h, coloured on the app's
 // wind scale, with the likely range as a faint cap, nights shaded, a dashed line at MIN knots and a "now" marker.
 // Medium: both. Small: the wind now. Large: a bigger chart and today's and tomorrow's sessions.
+// Lock Screen: inline "↗ 17 kn SW · g22", circular (speed, arrow, gust), rectangular (the reading + the next 12 h as bars).
 //
 // Install (once):
 //   1. Install Scriptable from the App Store and open it.
 //   2. Tap +, paste this whole file (it lives at https://seasensei.com/widget/seasensei-widget.js), name it SeaSensei.
 //      Tap ▶ once to preview it.
 //   3. Long-press the Home Screen → Edit → Add Widget → Scriptable → Medium (or Small / Large) → Add Widget.
+//      Lock Screen: long-press the Lock Screen → Customize → Lock Screen → tap the widget row → Scriptable → pick a size, then tap it → Script: SeaSensei.
 //   4. Long-press the new widget → Edit Widget → Script: SeaSensei. "When Interacting": Open URL (opens the app).
 // iOS decides how often widgets refresh (roughly every 15–30 min); the data is cached on the server, so frequent
 // refreshes cost nothing. Without a connection it shows the last data it had, marked "offline".
@@ -310,9 +312,64 @@ async function load() {
   }
 }
 
+// ---- Lock Screen (iOS 16+): inline, circular, rectangular. iOS tints these itself, so plain white text and shapes. ----
+const ARROWS = ["↓", "↙", "←", "↖", "↑", "↗", "→", "↘"]; // the way the wind blows TO, for FROM 0°, 45°, …
+const arrowFor = (dir) => ARROWS[Math.round((((dir % 360) + 360) % 360) / 45) % 8];
+
+function lockWidget(data, family) {
+  const w = new ListWidget();
+  const n = data && data.now;
+  const kn = n ? Math.round(n.speed) : null;
+  const gust = n && n.gust != null ? Math.round(n.gust) : null;
+  if (family === "accessoryInline") {
+    w.addText(n ? `${arrowFor(n.dir)} ${kn} kn ${n.compass}${gust != null ? ` · g${gust}` : ""}` : "SeaSensei · no reading");
+    return w;
+  }
+  if (family === "accessoryCircular") {
+    w.addAccessoryWidgetBackground = true;
+    const st = w.addStack(); st.layoutVertically(); st.centerAlignContent();
+    const top = st.addText(n ? arrowFor(n.dir) : "–"); top.font = Font.systemFont(11); top.centerAlignText();
+    const mid = st.addText(n ? String(kn) : "–"); mid.font = Font.boldRoundedSystemFont(22); mid.centerAlignText(); mid.minimumScaleFactor = 0.6;
+    const bot = st.addText(gust != null ? `g${gust}` : "kn"); bot.font = Font.systemFont(10); bot.centerAlignText();
+    return w;
+  }
+  // accessoryRectangular: the reading on top, the next 12 hours as bars below
+  const head = w.addText(n ? `${arrowFor(n.dir)} ${kn} kn ${n.compass}${gust != null ? `  g${gust}` : ""}` : "No reading");
+  head.font = Font.boldSystemFont(14); head.minimumScaleFactor = 0.7;
+  const hours = ((data && data.forecast) || []).filter((h) => h.t >= Date.now() - 30 * 60e3).slice(0, 12);
+  if (hours.length) {
+    const W = 150, H = 30, top = 30, gap = 2, bw = (W - gap * (hours.length - 1)) / hours.length;
+    const dc = new DrawContext(); dc.size = new Size(W, H); dc.opaque = false; dc.respectScreenScale = true;
+    const y = (kn) => H - Math.max(2, Math.min(1, kn / top) * H);
+    hours.forEach((h, i) => {
+      dc.setFillColor(new Color("#ffffff", h.night ? 0.35 : 0.95));
+      const path = new Path(); const x = i * (bw + gap);
+      path.addRoundedRect(new Rect(x, y(h.speed), bw, H - y(h.speed)), 1.5, 1.5);
+      dc.addPath(path); dc.fillPath();
+    });
+    dc.setFillColor(new Color("#ffffff", 0.5));
+    for (let x = 0; x < W; x += 6) dc.fillRect(new Rect(x, y(MIN) - 0.5, 3, 1)); // the threshold, dashed
+    const img = w.addImage(dc.getImage()); img.imageSize = new Size(W, H);
+    const lab = w.addText(data.headline || ""); lab.font = Font.systemFont(10); lab.lineLimit = 1; lab.minimumScaleFactor = 0.7;
+  } else if (data && data.headline) {
+    const lab = w.addText(data.headline); lab.font = Font.systemFont(11); lab.lineLimit = 2;
+  }
+  return w;
+}
+
 async function main() {
   const family = config.widgetFamily || "medium";
   const { data, offlineSince, failed } = await load();
+  if (family.startsWith("accessory")) {
+    const lw = lockWidget(data, family);
+    lw.url = SPOT ? BASE + "/?spot=" + encodeURIComponent(SPOT) : BASE + "/";
+    lw.refreshAfterDate = new Date(Date.now() + 15 * 60e3);
+    if (config.runsInWidget) Script.setWidget(lw);
+    else if (family === "accessoryCircular") await lw.presentAccessoryCircular();
+    else if (family === "accessoryInline") await lw.presentAccessoryInline();
+    else await lw.presentAccessoryRectangular();
+    return Script.complete();
+  }
   const { w, h } = sizeFor(family);
   const widget = new ListWidget();
   widget.setPadding(0, 0, 0, 0);
