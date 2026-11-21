@@ -161,6 +161,16 @@ Modes: every morning, or only when it's on. A tap opens `/?spot=<id>` (or `/`).
 - Cost: ≤ 2 Open-Meteo calls per distinct spot place per 30 min of due briefings (seed spots are shared by everyone): ~6 calls a morning for
   riders on the seed spots, at most 24 per rider with 12 custom spots.
 
+## Home-screen widget (Scriptable)
+An iPhone widget for the free Scriptable app: `public/widget/seasensei-widget.js` (served at `/widget/seasensei-widget.js`; install
+steps in its header). It draws with `DrawContext` from a pure `layout()` (data → draw ops), so it can be previewed off-phone by shimming
+the Scriptable classes onto a canvas. Data: `GET /api/widget?station=8726412[&min=15&max=30]` (`server/widget.mjs`; only the
+calibration's `coops:` stations, Middle Tampa Bay always): the station's latest CO-OPS reading (blank values skipped, cached 3 min)
+and the SeaSensei forecast at the station from `composeWidget()` (`src/lib/widget.ts`, in the engine bundle): the station's own
+calibration, the nowcast from its reading, past 6 h + next 24 h with `windHex` colours and night flags, today/tomorrow sessions and a
+headline. The forecast comes from the briefing's `seriesAt()` cache (≤ 2 Open-Meteo calls per place per 30 min). Fails soft (`now: null`
+or `forecast: []` plus `error`); `Cache-Control: public, max-age=120`; CORS `*` on this route only. Tested in `server.spec.ts`.
+
 ## Things that will bite
 - MapLibre 6 finds its worker via `import.meta.url`, which breaks once bundled. `scripts/copy-maplibre-worker.mjs`
   runs on `predev`/`prebuild`; the server must serve `.mjs` as JavaScript (it does, in `server.mjs`'s type table).

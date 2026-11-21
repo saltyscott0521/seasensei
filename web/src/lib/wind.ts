@@ -360,6 +360,9 @@ export function windColor(kn: number, alpha = 1) {
   return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
 }
 
+/** The same scale as "#rrggbb", for consumers that can't take CSS rgba() (the home-screen widget). */
+export const windHex = (kn: number) => `#${rgbAt(kn).map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+
 const SCALE_MAX = 45;
 /** CSS gradient of the scale (0–45 kn) for legends and slider tracks. */
 export const windGradient = (dir = "90deg") =>

@@ -10,6 +10,7 @@ export { forecastFrom } from "./forecast";
 export { alertsUrl, parseAlerts, type MarineAlert } from "./marine";
 export { FALLBACK_CALIBRATION, parseCalibration } from "./sensei";
 export { parseSpotModels, PRIMARY_MODELS, SPOT_REQUESTS, spotModelsUrl } from "./wind";
+export { composeWidget, latestCoopsReading, type Widget, type WidgetStation } from "./widget";
 
 const HOUR = 3600e3;
 

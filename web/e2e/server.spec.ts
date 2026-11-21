@@ -90,6 +90,8 @@ type Stubs = {
   alerts: unknown[];
   /** The stand-in push service: what it was sent, and what it answers per path (default 201). */
   pushes: { path: string; headers: http.IncomingHttpHeaders; body: Buffer }[]; pushStatus: Record<string, number>;
+  /** The widget: Middle Tampa Bay's 6-minute wind rows, how often NOAA was asked for it, and outages. */
+  widgetRows: Record<string, string>[]; coopsAsks: number; coopsDown: boolean; spotFail: boolean;
 };
 const DATASET: Record<string, string> = { gfs_hrrr: "ncep_hrrr_conus", gfs_global: "ncep_gfs013" };
 // The stand-in Open-Meteo's current run per dataset (unix seconds). 01Z NBM isn't a 3-hourly run, so it's skipped.
@@ -123,6 +125,7 @@ async function startStubs(): Promise<Stubs> {
     calls: [] as Anthropic[], failNhc: false, leakFirst: false, runs: initialRuns(), puts: [] as Put[], metaHits: 0, archiveAsks: [] as URLSearchParams[],
     objects: new Map(), metaQueue: {}, dataRuns: {}, failPuts: null, refused: 0, frozen: false,
     spotWind: () => null, spotTz: TZ, spotAsks: [], alerts: [], pushes: [], pushStatus: {},
+    widgetRows: [], coopsAsks: 0, coopsDown: false, spotFail: false,
   } as unknown as Stubs;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url!, "http://x");
@@ -159,6 +162,7 @@ async function startStubs(): Promise<Stubs> {
     // A spot's forecast, as the app (and the briefing) asks for it: several models, one point, the spot's own time zone
     if (p === "/v1/forecast" && url.searchParams.get("timezone") === "auto") {
       stubs.spotAsks.push(url.searchParams);
+      if (stubs.spotFail) return send(429, { error: true, reason: "Too many requests" });
       const lat = +url.searchParams.get("latitude")!, lon = +url.searchParams.get("longitude")!;
       const start = Math.floor(Date.now() / 3600e3) * 3600 - 24 * 3600;
       const time = Array.from({ length: 8 * 24 }, (_, i) => start + i * 3600);
@@ -193,6 +197,9 @@ async function startStubs(): Promise<Stubs> {
     // NOAA wind, 6-minute readings as strings. Clearwater has no wind sensor. In the hour two before this one,
     // Old Port Tampa's sensor was down but for two readings: the rest are "" (which Number() would read as 0 kn).
     if (p === "/api/prod/datagetter") {
+      stubs.coopsAsks++;
+      if (stubs.coopsDown) return send(503, { error: "down" });
+      if (url.searchParams.get("station") === "8726412") return send(200, { metadata: { id: "8726412", name: "Middle Tampa Bay" }, data: stubs.widgetRows });
       if (url.searchParams.get("station") !== "8726607") return send(200, { error: { message: "No data was found." } });
       const hour = HOUR0 * 1000, data = [];
       for (let t = hour - 4 * 3600e3; t < hour - 1800e3; t += 360e3) {
@@ -1137,4 +1144,92 @@ test("VAPID keys are made once and kept in R2, so a redeploy keeps every subscri
     expect(await (await post(second.base, "/api/push/unsubscribe", { endpoint: rider.subscription.endpoint })).json()).toMatchObject({ removed: true });
     expect([...stubs.objects.keys()].filter((k) => k.includes("/push/v1/subs/"))).toHaveLength(0);
   } finally { await second.stop(); await stubs.close(); }
+});
+
+/* ---------------- the home-screen widget ---------------- */
+
+// Middle Tampa Bay's own map reads every model 25 % higher; Old Port Tampa (no maps) is allowed too.
+const WIDGET_SEED = {
+  ...PLAIN_SEED,
+  stations: [
+    { id: "coops:8726412", name: "Middle Tampa Bay", lat: 27.66175, lon: -82.59952, kind: "water",
+      models: Object.fromEntries(["hrrr", "rrfs", "nbm", "ecmwf", "gfs"].map((m) => [m, { n: 500, qm: KNOTS.map((k) => [k, k * 1.25]), mae: [2, 2.5, 3, 3.5], gf: 1.3 }])) },
+    { id: "coops:8726607", name: "Old Port Tampa", lat: 27.8578, lon: -82.5528, kind: "shore", models: {} },
+  ],
+};
+const widgetSeedFile = path.join(os.tmpdir(), `seasensei-widget-seed-${process.pid}.json`);
+fs.writeFileSync(widgetSeedFile, JSON.stringify(WIDGET_SEED));
+const coopsStamp = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+
+test("the widget: the station's reading and its own SeaSensei forecast, nowcast, sessions; cached, CORS, unknown stations refused, soft failures", async () => {
+  const stubs = await startStubs();
+  stubs.spotWind = () => ({ speed: 16, dir: 225 }); // every model, everywhere: 16 kn SW
+  const min = Math.floor(Date.now() / 60e3) * 60e3;
+  stubs.widgetRows = [
+    { t: coopsStamp(min - 16 * 60e3), s: "22.0", d: "220.0", dr: "SW", g: "27.0", f: "0,0" },
+    { t: coopsStamp(min - 10 * 60e3), s: "26.0", d: "230.0", dr: "SW", g: "", f: "0,0" }, // no gust: null, not 0
+    { t: coopsStamp(min - 4 * 60e3), s: "", d: "", dr: "", g: "", f: "1,1" }, // a blank reading: skipped, never 0 kn
+  ];
+  const env = { ...QUIET, BRIEFING_BOOT_DELAY_MS: "100000000", CALIBRATION_SEED_FILE: widgetSeedFile };
+  const app = await startServer(stubs, env);
+  try {
+    const res = await fetch(`${app.base}/api/widget`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("public, max-age=120");
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    const w = await res.json();
+    expect(w.error).toBeUndefined();
+    expect(w.station).toMatchObject({ id: "8726412", name: "Middle Tampa Bay" });
+    expect(w.tz).toBe(TZ);
+    expect(w.now).toEqual({ t: min - 10 * 60e3, speed: 26, gust: null, dir: 230, compass: "SW", color: expect.stringMatching(/^#[0-9a-f]{6}$/) });
+    // ~6 h back and ~24 h ahead, hourly, each with the scale's colour and day/night
+    const hour = Math.floor(Date.now() / 3600e3) * 3600e3;
+    expect(w.forecast.length).toBe(31);
+    expect(w.forecast[0].t).toBe(hour - 6 * 3600e3);
+    expect(w.forecast.at(-1).t).toBe(hour + 24 * 3600e3);
+    for (const h of w.forecast) expect(h).toEqual({ t: expect.any(Number), speed: expect.any(Number), gust: expect.any(Number), dir: 225, lo: expect.any(Number), hi: expect.any(Number), color: expect.stringMatching(/^#[0-9a-f]{6}$/), night: expect.any(Boolean) });
+    expect(w.forecast.some((h: any) => h.night) && w.forecast.some((h: any) => !h.night)).toBe(true);
+    // the station's own map: 16 kn raw reads 20 kn (beyond the nowcast's reach), with its gust factor
+    const far = w.forecast.find((h: any) => h.t === hour + 12 * 3600e3);
+    expect(far.speed).toBe(20);
+    expect(far.gust).toBe(26);
+    // the fresh 26 kn reading pulls the next hour toward it, fading
+    const next = w.forecast.find((h: any) => h.t === hour + 3600e3);
+    expect(w.nowcast).toBe(true);
+    expect(next.speed).toBeGreaterThan(22);
+    expect(next.speed).toBeLessThan(26);
+    expect(w.forecast.find((h: any) => h.t === hour - 3 * 3600e3).speed).toBe(20); // past hours stay as forecast
+    expect(w.headline).toMatch(/^(On now · till \d+ (AM|PM)|On at \d+ (AM|PM) · |Next: \w{3} \d+ (AM|PM) · )/);
+    expect(w.sessions.length).toBeGreaterThan(0);
+    expect(w.sessions[0].text).toMatch(/^(Today|\w{3}) .+ · \d+(–\d+)? kn SW · (Likely|Possible|Unlikely)$/);
+    expect([w.min, w.max]).toEqual([15, 30]);
+
+    // the second call is served from the caches: no Open-Meteo, no NOAA
+    expect([stubs.spotAsks.length, stubs.coopsAsks]).toEqual([2, 1]);
+    expect(await (await fetch(`${app.base}/api/widget?station=8726412&min=24&max=35`)).json()).toMatchObject({ min: 24, max: 35 }); // the rider's range
+    expect([stubs.spotAsks.length, stubs.coopsAsks]).toEqual([2, 1]);
+
+    // only the calibration's NOAA stations
+    const bad = await fetch(`${app.base}/api/widget?station=8518750`);
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toMatchObject({ error: "unknown_station", stations: ["8726412", "8726607"] });
+    expect((await fetch(`${app.base}/api/calibration`)).headers.get("access-control-allow-origin")).toBeNull();
+
+    // Open-Meteo down: the reading still comes, with an empty forecast and a reason (Old Port Tampa: a new place)
+    stubs.spotFail = true;
+    const off = await (await fetch(`${app.base}/api/widget?station=8726607`)).json();
+    expect(off.forecast).toEqual([]);
+    expect(off.error).toMatch(/forecast unavailable/);
+    expect(off.now).toMatchObject({ speed: 10, compass: "N" }); // its latest stand-in reading (too old to bend anything)
+  } finally { await app.stop(); }
+  // NOAA down: the forecast still comes, with now: null
+  stubs.spotFail = false; stubs.coopsDown = true;
+  const again = await startServer(stubs, env);
+  try {
+    const w = await (await fetch(`${again.base}/api/widget`)).json();
+    expect(w.now).toBeNull();
+    expect(w.nowcast).toBe(false);
+    expect(w.forecast.find((h: any) => h.t === Math.floor(Date.now() / 3600e3) * 3600e3 + 3600e3).speed).toBe(20);
+    expect(w.error).toMatch(/station unavailable/);
+  } finally { await again.stop(); await stubs.close(); }
 });

@@ -1,7 +1,7 @@
 // SeaSensei's server: the built app (dist/), the daily wind discussion (JSON API, archive, RSS) and the
 // scheduler that writes it, the forecast-run archive (archive.mjs, to R2), the station observations (observe.mjs),
-// the learning that turns the two into /api/calibration (calibrate.mjs) and the morning briefing push (briefing.mjs,
-// push.mjs). No framework; Node core only, plus the Anthropic SDK in discussion.mjs, aws4fetch (R2 request signing)
+// the learning that turns the two into /api/calibration (calibrate.mjs), the morning briefing push (briefing.mjs,
+// push.mjs) and the home-screen widget's data (widget.mjs). No framework; Node core only, plus the Anthropic SDK in discussion.mjs, aws4fetch (R2 request signing)
 // in r2.mjs and web-push (encryption and VAPID) in push.mjs.
 import http from "node:http";
 import fs from "node:fs";
@@ -15,6 +15,7 @@ import * as archive from "./archive.mjs";
 import * as observe from "./observe.mjs";
 import * as calibrate from "./calibrate.mjs";
 import * as briefing from "./briefing.mjs";
+import * as widget from "./widget.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(process.env.DIST_DIR ?? path.join(here, "..", "dist"));
@@ -146,6 +147,7 @@ function route(req, res) {
     return handleGenerate(req, res);
   }
   if (briefing.handle(req, res, url, admin)) return;
+  if (widget.handle(req, res, url)) return;
   if (req.method !== "GET" && req.method !== "HEAD") { res.writeHead(405); return res.end(); }
   if (p === "/api/discussion") return handleDiscussion(url, res);
   if (p === "/api/discussions") return sendJson(res, 200, { items: store.list(), ...meta() }, "public, max-age=300");

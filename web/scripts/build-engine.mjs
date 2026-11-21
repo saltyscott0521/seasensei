@@ -1,5 +1,6 @@
 // Bundles the app's pure forecast logic (src/lib/briefing.ts and what it imports: session, sensei, wind, forecast,
-// marine) into server/engine.mjs, so the server's morning briefing says exactly what the board says. Runs on
+// marine, widget) into server/engine.mjs, so the server's morning briefing and home-screen widget say exactly what the
+// board says. Runs on
 // `prebuild` (and before the server end-to-end tests); the Dockerfile copies the result into the runtime image.
 // No React or browser modules may end up in it: the build fails if one does.
 import { build } from "esbuild";

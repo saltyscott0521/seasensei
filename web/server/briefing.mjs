@@ -34,6 +34,8 @@ const info = {
 };
 
 export const available = () => !!E && !!push.publicKey();
+/** The bundled engine (null when engine.mjs is missing), for the home-screen widget (widget.mjs). */
+export const engine = () => E;
 
 /* ---------------- forecasts and alerts, shared across subscribers ---------------- */
 
@@ -54,8 +56,11 @@ async function getJson(url, headers = {}) {
 }
 
 const inflight = new Map();
-/** A spot's raw models (both requests, as the app makes them), or null when neither arrived. */
-function seriesAt(lat, lon, now) {
+/**
+ * A spot's raw models (both requests, as the app makes them), or null when neither arrived. Shared with the
+ * home-screen widget (widget.mjs): one cache, so a place costs at most two Open-Meteo calls per 30 minutes.
+ */
+export function seriesAt(lat, lon, now) {
   const la = +lat.toFixed(3), lo = +lon.toFixed(3), key = `${la},${lo}`;
   const hit = forecasts.get(key);
   if (hit && now - hit.at < hit.ttl) return Promise.resolve(hit.series);
@@ -95,7 +100,7 @@ async function alertAt(lat, lon, now) {
 
 let calSrc = null, calParsed = null;
 /** The server's own calibration (what /api/calibration serves), read the way the browser reads it. */
-function calibration() {
+export function calibration() {
   const doc = calibrate.calibration();
   if (doc !== calSrc) {
     calSrc = doc;
