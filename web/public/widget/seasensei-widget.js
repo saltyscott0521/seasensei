@@ -4,16 +4,16 @@
 // SeaSensei's forecast at the station: one bar per hour, the past 6 h dimmed and the next 24 h, coloured on the app's
 // wind scale, with the likely range as a faint cap, nights shaded, a dashed line at MIN knots and a "now" marker.
 // Medium: both. Small: the wind now. Large: a bigger chart and today's and tomorrow's sessions.
-// Lock Screen: inline "↗ 17 kn SW · g22", circular (speed, arrow, gust), rectangular (the reading + the next 12 h as bars).
+// Lock Screen: inline "^ 17 kn SW - g22", circular (speed, arrow, gust), rectangular (the reading + the next 12 h as bars).
 //
 // Install (once):
 //   1. Install Scriptable from the App Store and open it.
 //   2. Tap +, paste this whole file (it lives at https://seasensei.com/widget/seasensei-widget.js), name it SeaSensei.
-//      Tap ▶ once to preview it.
-//   3. Long-press the Home Screen → Edit → Add Widget → Scriptable → Medium (or Small / Large) → Add Widget.
-//      Lock Screen: long-press the Lock Screen → Customize → Lock Screen → tap the widget row → Scriptable → pick a size, then tap it → Script: SeaSensei.
-//   4. Long-press the new widget → Edit Widget → Script: SeaSensei. "When Interacting": Open URL (opens the app).
-// iOS decides how often widgets refresh (roughly every 15–30 min); the data is cached on the server, so frequent
+//      Tap Play once to preview it.
+//   3. Long-press the Home Screen -> Edit -> Add Widget -> Scriptable -> Medium (or Small / Large) -> Add Widget.
+//      Lock Screen: long-press the Lock Screen -> Customize -> Lock Screen -> tap the widget row -> Scriptable -> pick a size, then tap it -> Script: SeaSensei.
+//   4. Long-press the new widget -> Edit Widget -> Script: SeaSensei. "When Interacting": Open URL (opens the app).
+// iOS decides how often widgets refresh (roughly every 15-30 min); the data is cached on the server, so frequent
 // refreshes cost nothing. Without a connection it shows the last data it had, marked "offline".
 //
 // Data: GET {BASE}/api/widget?station=STATION&min=MIN (public JSON; the server builds it with the app's own engine).
@@ -42,7 +42,7 @@ function ago(t, now) {
   return h < 36 ? h + " h ago" : Math.round(h / 24) + " d ago";
 }
 
-/** The hour (0–23) at t in the station's zone, falling back to the phone's. */
+/** The hour (0-23) at t in the station's zone, falling back to the phone's. */
 function localHour(t, tz) {
   try {
     const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hourCycle: "h23" }).formatToParts(new Date(t));
@@ -73,7 +73,7 @@ function dart(cx, cy, r, bearing) {
  * The widget as a list of primitive draw ops, from the /api/widget payload. Coordinates in points, origin top-left.
  *   { k: "rect", x, y, w, h, c, a?, r? }           filled (rounded) rectangle
  *   { k: "line", x1, y1, x2, y2, c, a?, w? }        stroked line
- *   { k: "poly", pts: [[x, y], …], c, a? }          filled polygon
+ *   { k: "poly", pts: [[x, y], ...], c, a? }          filled polygon
  *   { k: "ring", x, y, r, c, a?, w? }               stroked circle
  *   { k: "text", t, x, y, w, h, size, weight, c, a?, align? }   weight: regular|medium|semibold|bold|heavy|rounded
  * `status`: { now (ms), offlineSince (ms of the cached data) | null, failed (no data at all) }.
@@ -86,7 +86,7 @@ function layout(data, family, W, H, status) {
 
   if (!data) {
     text("SeaSensei", 14, 14, W - 28, 18, 13, "semibold", C.fg);
-    text(status.failed ? "Can't reach seasensei.com yet" : "Loading…", 14, H / 2 - 10, W - 28, 20, 12, "regular", C.fg2);
+    text(status.failed ? "Can't reach seasensei.com yet" : "Loading\u2026", 14, H / 2 - 10, W - 28, 20, 12, "regular", C.fg2);
     text("Tap to open the app", 14, H - 26, W - 28, 16, 10, "regular", C.fg3);
     return ops;
   }
@@ -108,17 +108,17 @@ function layout(data, family, W, H, status) {
     ops.push({ k: "ring", x: P + ar, y: y + ar + 1, r: ar + 1, c: C.fg3, a: 0.6, w: 1 });
     // The station reports where the wind comes FROM; the arrow points where it blows TO.
     ops.push({ k: "poly", pts: dart(P + ar, y + ar + 1, ar - 2, (n.dir + 180) % 360), c: C.fg });
-    text(n.compass + "  " + round(n.dir) + "°", P + 2 * ar + 7, y + 3, lw - 2 * ar - 7, 16, 13, "semibold", C.fg);
+    text(n.compass + "  " + round(n.dir) + "\u00b0", P + 2 * ar + 7, y + 3, lw - 2 * ar - 7, 16, 13, "semibold", C.fg);
     y += 2 * ar + 7;
     const age = now - n.t;
     text(ago(n.t, now), P, y, lw, 14, 11, "regular", age > 30 * 60e3 ? C.warn : C.fg2);
   } else {
-    text("–", P, y, lw, big * 1.15, big, "rounded", C.fg3);
+    text("\u2013", P, y, lw, big * 1.15, big, "rounded", C.fg3);
     y += big * 1.12;
     text("No reading", P, y + 3, lw, 16, 13, "semibold", C.fg2);
     text("station quiet", P, y + 23, lw, 14, 11, "regular", C.fg3);
   }
-  const off = status.offlineSince != null ? "offline · " + ago(status.offlineSince, now) : null;
+  const off = status.offlineSince != null ? "offline \u00b7 " + ago(status.offlineSince, now) : null;
   const foot = family === "medium" ? (data.station ? data.station.name : "") : "";
   if (family === "medium") text(foot, P, H - P - 13, lw, 13, 10, "medium", C.fg3);
   if (off) text(off, P, family === "medium" ? H - P - 26 : H - P - 13, family === "small" ? lw : W - 2 * P, 13, 10, "semibold", C.warn);
@@ -140,7 +140,7 @@ function layout(data, family, W, H, status) {
     if (peak) {
       text("Peak today", rx, P + 60, rw, 14, 11, "medium", C.fg2);
       text(round(peak.speed) + " kn", rx, P + 74, rw, 24, 20, "bold", peak.color);
-      text("at " + hourLabel(localHour(peak.t, data.tz)).replace("a", " AM").replace("p", " PM") + (peak.hi != null ? " · up to " + round(peak.hi) : ""), rx, P + 98, rw, 14, 11, "regular", C.fg2);
+      text("at " + hourLabel(localHour(peak.t, data.tz)).replace("a", " AM").replace("p", " PM") + (peak.hi != null ? " \u00b7 up to " + round(peak.hi) : ""), rx, P + 98, rw, 14, 11, "regular", C.fg2);
     }
     top = P + 128; bottom = H - P - 92;
   } else {
@@ -202,7 +202,7 @@ function layout(data, family, W, H, status) {
   // ---- large: the sessions
   if (family === "large") {
     let sy = bottom + 20;
-    text("Sessions · " + (data.min || MIN) + "–" + (data.max || 30) + " kn", P, sy, W - 2 * P, 14, 11, "semibold", C.fg2);
+    text("Sessions \u00b7 " + (data.min || MIN) + "\u2013" + (data.max || 30) + " kn", P, sy, W - 2 * P, 14, 11, "semibold", C.fg2);
     sy += 17;
     const list = data.sessions || [];
     if (!list.length) text("None today or tomorrow", P, sy, W - 2 * P, 16, 12, "regular", C.fg3);
@@ -219,7 +219,7 @@ function layout(data, family, W, H, status) {
 
 /* ---------------- Scriptable ---------------- */
 
-// Widget sizes in points, by screen width × height (Apple's published sizes); the closest screen wins.
+// Widget sizes in points, by screen width x height (Apple's published sizes); the closest screen wins.
 const SIZES = [
   [430, 932, 170, 364, 170, 382], [428, 926, 170, 364, 170, 382], [440, 956, 170, 364, 170, 382],
   [414, 896, 169, 360, 169, 379], [414, 736, 159, 348, 157, 357], [402, 874, 162, 345, 162, 364],
@@ -313,7 +313,7 @@ async function load() {
 }
 
 // ---- Lock Screen (iOS 16+): inline, circular, rectangular. iOS tints these itself, so plain white text and shapes. ----
-const ARROWS = ["↓", "↙", "←", "↖", "↑", "↗", "→", "↘"]; // the way the wind blows TO, for FROM 0°, 45°, …
+const ARROWS = ["\u2193", "\u2199", "\u2190", "\u2196", "\u2191", "\u2197", "\u2192", "\u2198"]; // the way the wind blows TO, for FROM 0\u00b0, 45\u00b0, \u2026
 const arrowFor = (dir) => ARROWS[Math.round((((dir % 360) + 360) % 360) / 45) % 8];
 
 function lockWidget(data, family) {
@@ -322,14 +322,14 @@ function lockWidget(data, family) {
   const kn = n ? Math.round(n.speed) : null;
   const gust = n && n.gust != null ? Math.round(n.gust) : null;
   if (family === "accessoryInline") {
-    w.addText(n ? `${arrowFor(n.dir)} ${kn} kn ${n.compass}${gust != null ? ` · g${gust}` : ""}` : "SeaSensei · no reading");
+    w.addText(n ? `${arrowFor(n.dir)} ${kn} kn ${n.compass}${gust != null ? ` \u00b7 g${gust}` : ""}` : "SeaSensei \u00b7 no reading");
     return w;
   }
   if (family === "accessoryCircular") {
     w.addAccessoryWidgetBackground = true;
     const st = w.addStack(); st.layoutVertically(); st.centerAlignContent();
-    const top = st.addText(n ? arrowFor(n.dir) : "–"); top.font = Font.systemFont(11); top.centerAlignText();
-    const mid = st.addText(n ? String(kn) : "–"); mid.font = Font.boldRoundedSystemFont(22); mid.centerAlignText(); mid.minimumScaleFactor = 0.6;
+    const top = st.addText(n ? arrowFor(n.dir) : "\u2013"); top.font = Font.systemFont(11); top.centerAlignText();
+    const mid = st.addText(n ? String(kn) : "\u2013"); mid.font = Font.boldRoundedSystemFont(22); mid.centerAlignText(); mid.minimumScaleFactor = 0.6;
     const bot = st.addText(gust != null ? `g${gust}` : "kn"); bot.font = Font.systemFont(10); bot.centerAlignText();
     return w;
   }

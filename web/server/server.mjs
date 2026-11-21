@@ -24,7 +24,7 @@ const SITE = (process.env.SITE_URL ?? "https://seasensei.com").replace(/\/$/, ""
 const ADMIN_TOKEN = process.env.DISCUSSION_ADMIN_TOKEN ?? "";
 
 const TYPES = {
-  ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".mjs": "application/javascript",
+  ".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8", ".mjs": "application/javascript; charset=utf-8",
   ".css": "text/css", ".json": "application/json", ".webmanifest": "application/manifest+json",
   ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".txt": "text/plain",
 };
