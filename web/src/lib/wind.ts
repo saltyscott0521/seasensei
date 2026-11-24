@@ -332,9 +332,9 @@ type Stops = [number, [number, number, number]][];
 export type WindScale = "blue" | "turbo" | "spectrum";
 
 /**
- * Wind speed → colour. The rider picks the scale (settings; `lib/windScale.ts` keeps the choice, default blue); every
+ * Wind speed → colour. The rider picks the scale (settings; `lib/windScale.ts` keeps the choice, default spectrum); every
  * consumer reads it through windColor / windGradient / windStops. All three are anchored to the ranges riders think in
- * (<10, 10–14, 14–18, 18–25 prime, 25–30, 30+): each step flat across the core of its range, blending near the edges.
+ * (blue and turbo: <10, 10–14, 14–18, 18–25 prime, 25–30, 30+; spectrum its own, below): each step flat across the core of its range, blending near the edges.
  * - blue: one blue (hue ~212°) that only brightens with the wind (the map and panels are dark, so light reads as strong);
  *   reads without hue, for colour-blind riders too, and stays well apart from the `go` verdict's emerald (#34d399, ~158°).
  * - turbo: Google's Turbo rainbow, the look of most wind maps; its darkest ends are trimmed so calm and storm still show on the dark map.
@@ -342,6 +342,20 @@ export type WindScale = "blue" | "turbo" | "spectrum";
  *   ranges). Its green leans yellow (~105°) so it never reads as `go`.
  */
 export const WIND_SCALES: Record<WindScale, { label: string; note: string; stops: Stops }> = {
+  spectrum: {
+    label: "Spectrum", note: "Grey, blues, green, yellow, orange, red, purple",
+    stops: [
+      [0, [78, 86, 100]], [4, [106, 114, 128]], [9.5, [150, 156, 166]], // <10: grey
+      [10.5, [150, 200, 240]], [11.5, [158, 206, 244]],                 // 10–12: light blue
+      [12.5, [70, 144, 234]], [13.5, [60, 134, 230]],                   // 12–14: blue
+      [14.5, [112, 206, 80]], [16.5, [96, 196, 72]],                    // 14–17: green
+      [17.5, [238, 212, 64]], [19.5, [244, 204, 56]],                   // 17–20: yellow
+      [20.5, [250, 150, 52]], [24.5, [244, 122, 40]],                   // 20–25: orange
+      [25.5, [236, 68, 60]], [27.5, [222, 50, 54]],                     // 25–28: red
+      [28.5, [178, 76, 228]], [40, [204, 64, 238]],                     // 28+: purple
+    ],
+  },
+
   blue: {
     label: "Blue", note: "One colour, brighter with more wind",
     stops: [
@@ -360,26 +374,12 @@ export const WIND_SCALES: Record<WindScale, { label: string; note: string; stops
       [24, [184, 243, 57]], [28, [233, 203, 55]], [32, [248, 143, 39]], [36, [229, 82, 16]], [40, [185, 34, 3]],
     ],
   },
-  spectrum: {
-    label: "Spectrum", note: "Grey, blues, green, yellow, orange, red, purple",
-    stops: [
-      [0, [78, 86, 100]], [4, [106, 114, 128]], [9.5, [150, 156, 166]], // <10: grey
-      [10.5, [150, 200, 240]], [11.5, [158, 206, 244]],                 // 10–12: light blue
-      [12.5, [70, 144, 234]], [13.5, [60, 134, 230]],                   // 12–14: blue
-      [14.5, [112, 206, 80]], [16.5, [96, 196, 72]],                    // 14–17: green
-      [17.5, [238, 212, 64]], [19.5, [244, 204, 56]],                   // 17–20: yellow
-      [20.5, [250, 150, 52]], [24.5, [244, 122, 40]],                   // 20–25: orange
-      [25.5, [236, 68, 60]], [27.5, [222, 50, 54]],                     // 25–28: red
-      [28.5, [178, 76, 228]], [40, [204, 64, 238]],                     // 28+: purple
-    ],
-  },
-
 };
 /** 25 kn and up (as shown, rounded) pulses wherever the wind right now / at the chosen hour is drawn, on every scale. */
 export const PULSE_KN = 25;
 export const pulses = (kn: number | null | undefined) => kn != null && Math.round(kn) >= PULSE_KN;
 export const WIND_SCALE_IDS = Object.keys(WIND_SCALES) as WindScale[];
-export const DEFAULT_WIND_SCALE: WindScale = "blue";
+export const DEFAULT_WIND_SCALE: WindScale = "spectrum";
 export const isWindScale = (v: unknown): v is WindScale => typeof v === "string" && v in WIND_SCALES;
 
 let STOPS: Stops = WIND_SCALES[DEFAULT_WIND_SCALE].stops;

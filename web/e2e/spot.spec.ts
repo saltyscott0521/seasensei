@@ -424,27 +424,41 @@ const hsl = (css: string) => {
   return { h: (h + 360) % 360, s, l };
 };
 
-test("the wind scale is one blue that brightens with the wind, apart from the 'go' verdict's green, and the hour grid wears it", async ({ page }) => {
-  const scale = await page.evaluate(async () => {
+test("the default scale (Spectrum) runs the riders' ranges, its green apart from the 'go' verdict's, and the hour grid wears it; Blue only brightens", async ({ page }) => {
+  const [spectrum, scale] = await page.evaluate(async () => {
     const m = await import(/* @vite-ignore */ ("/src/lib/wind.ts" as string));
-    return [5, 12, 15, 22, 28, 35].map((kn) => m.windColor(kn) as string);
+    const spectrum = [5, 11, 13, 15.5, 18.5, 22, 26.5, 32].map((kn) => m.windColor(kn) as string);
+    m.setWindScale("blue");
+    const blue = [5, 12, 15, 22, 28, 35].map((kn) => m.windColor(kn) as string);
+    m.setWindScale(m.DEFAULT_WIND_SCALE);
+    return [spectrum, blue];
   });
+  // grey, light blue, blue, green, yellow, orange, red, purple
+  const [grey, light, blu, green, yellow, orange, red, purple] = spectrum.map(hsl);
+  expect(grey.s).toBeLessThan(0.15);
+  for (const b of [light, blu]) { expect(b.h).toBeGreaterThanOrEqual(200); expect(b.h).toBeLessThanOrEqual(225); }
+  expect(light.l).toBeGreaterThan(blu.l);
+  expect(green.h).toBeGreaterThanOrEqual(95); expect(green.h).toBeLessThanOrEqual(120);
+  expect(yellow.h).toBeGreaterThanOrEqual(45); expect(yellow.h).toBeLessThanOrEqual(60);
+  expect(orange.h).toBeGreaterThanOrEqual(20); expect(orange.h).toBeLessThanOrEqual(40);
+  expect(red.h < 10 || red.h > 350).toBe(true);
+  expect(purple.h).toBeGreaterThanOrEqual(270); expect(purple.h).toBeLessThanOrEqual(300);
   const ks = scale.map(hsl);
   for (const k of ks) { expect(k.h).toBeGreaterThanOrEqual(200); expect(k.h).toBeLessThanOrEqual(225); } // one hue: blue
   for (let i = 1; i < ks.length; i++) expect(ks[i].l).toBeGreaterThan(ks[i - 1].l + 0.04);               // lightness climbs band by band
   const go = hsl((await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--color-go"))).trim());
-  expect(Math.abs(go.h - ks[2].h)).toBeGreaterThanOrEqual(25); // the scale never passes for "rideable"
+  expect(Math.abs(go.h - ks[2].h)).toBeGreaterThanOrEqual(25); // neither scale passes for "rideable"
+  expect(Math.abs(go.h - green.h)).toBeGreaterThanOrEqual(25);
 
-  // the hour grid: 21–24 kn bars are blue, 26+ kn gust cells a paler blue
+  // the hour grid: 21–24 kn bars are orange, 26–27 kn gust cells red
   await page.locator("aside").getByRole("button", { name: /Fort De Soto/ }).first().click();
   const table = hourTable(page);
   await expect(table).toBeVisible();
   const cells = await table.evaluate((el) => [...el.querySelectorAll<HTMLElement>("[data-bar], td span.num")]
     .map((c) => ({ kn: Number(c.textContent), bg: getComputedStyle(c).backgroundColor })).filter((c) => c.kn > 0 && c.bg !== "rgba(0, 0, 0, 0)"));
-  const blue = cells.filter((c) => c.kn >= 21 && c.kn <= 24), pale = cells.filter((c) => c.kn >= 26 && c.kn <= 32);
-  expect(blue.length).toBeGreaterThan(0);
-  expect(pale.length).toBeGreaterThan(0);
-  for (const c of [...blue, ...pale]) expect(hsl(c.bg).h, `${c.kn} kn`).toBeGreaterThanOrEqual(200);
-  const maxBlue = Math.max(...blue.map((c) => hsl(c.bg).l));
-  for (const c of pale) expect(hsl(c.bg).l, `${c.kn} kn`).toBeGreaterThan(maxBlue);
+  const oranges = cells.filter((c) => c.kn >= 21 && c.kn <= 24), reds = cells.filter((c) => c.kn >= 26 && c.kn <= 27);
+  expect(oranges.length).toBeGreaterThan(0);
+  expect(reds.length).toBeGreaterThan(0);
+  for (const c of oranges) { const h = hsl(c.bg).h; expect(h >= 15 && h <= 40, `${c.kn} kn`).toBe(true); }
+  for (const c of reds) { const h = hsl(c.bg).h; expect(h < 12 || h > 345, `${c.kn} kn`).toBe(true); }
 });

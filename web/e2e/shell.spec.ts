@@ -381,20 +381,21 @@ test("the timeline's track is the week's wind: one bar per hour in the map's col
 
 test("the gear beside the bell opens settings, and picking a wind colour scale repaints the app and sticks", async ({ page }) => {
   const legend = page.locator('[title="Wind speed on the map, knots"] i').first();
-  const blue = await legend.evaluate((el) => getComputedStyle(el).backgroundImage);
+  const start = await legend.evaluate((el) => getComputedStyle(el).backgroundImage);
   const gear = panel(page).getByRole("button", { name: "App settings", exact: true });
   await gear.click();
   const pop = page.getByRole("dialog", { name: "Settings" });
   await expect(pop).toBeVisible();
   const group = pop.getByRole("group", { name: "Wind colours" });
   await expect(group.getByRole("radio")).toHaveCount(3);
-  await expect(group.getByRole("radio", { name: /^Blue/ })).toBeChecked();
+  await expect(group.getByRole("radio", { name: /^Spectrum/ })).toBeChecked(); // the default
+  expect(start).toContain("rgb(70, 144, 234)"); // its blue (12–14 kn)
 
-  await group.getByText("Spectrum", { exact: true }).click();
-  await expect(group.getByRole("radio", { name: /^Spectrum/ })).toBeChecked();
-  await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).not.toBe(blue); // the timeline's legend follows at once
-  const spectrum = await legend.evaluate((el) => getComputedStyle(el).backgroundImage);
-  expect(spectrum).toContain("rgb(70, 144, 234)"); // its blue (12–14 kn)
+  await group.getByText("Blue", { exact: true }).click();
+  await expect(group.getByRole("radio", { name: /^Blue/ })).toBeChecked();
+  await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).not.toBe(start); // the timeline's legend follows at once
+  const blue = await legend.evaluate((el) => getComputedStyle(el).backgroundImage);
+  expect(blue).toContain("rgb(132, 186, 250)"); // its prime 18–25
 
   // one popover at a time: the bell swaps it for the briefing; Escape closes
   await panel(page).getByRole("button", { name: "Morning briefing" }).click();
@@ -406,7 +407,7 @@ test("the gear beside the bell opens settings, and picking a wind colour scale r
   // the choice is this device's, kept across visits
   await page.reload();
   await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible();
-  await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).toBe(spectrum);
+  await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).toBe(blue);
   await gear.click();
   await page.getByRole("dialog", { name: "Settings" }).getByText("Turbo", { exact: true }).click();
   await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).toContain("rgb(126, 255, 85)");

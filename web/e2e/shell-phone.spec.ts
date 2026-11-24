@@ -466,8 +466,8 @@ test("phone: the settings gear sits beside the bell, outside the sheet, and open
   const pop = page.getByRole("dialog", { name: "Settings" });
   await expect(pop).toBeVisible();
   expect(await pop.evaluate((el) => !!el.closest("[data-vaul-drawer]"))).toBe(false);
-  await pop.getByText("Spectrum", { exact: true }).tap();
-  await expect(pop.getByRole("radio", { name: /^Spectrum/ })).toBeChecked();
+  await pop.getByText("Blue", { exact: true }).tap();
+  await expect(pop.getByRole("radio", { name: /^Blue/ })).toBeChecked();
   await expect(sheet(page)).toHaveAttribute("data-snap", "rest");
   await pop.getByRole("button", { name: "Close app settings" }).tap();
   await expect(pop).toHaveCount(0);
