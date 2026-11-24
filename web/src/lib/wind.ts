@@ -329,20 +329,19 @@ export function sample(g: WindGrid, lat: number, lon: number) {
 }
 
 /**
- * Wind speed → colour, a smooth gradient anchored to the ranges riders think in: light air is grey to ~11 kn (dim to light, it
- * "isn't wind yet"), green from 14 kn, blue from 18 kn, purple from 26 and a deep vivid
- * purple-magenta from 30. Each colour is flat across the core of its range and blends into its neighbour near the
- * edges. The green leans yellow (hue ~120°) so it never reads as the `go` verdict's emerald (#34d399, ~158°).
+ * Wind speed → colour: one blue, brighter with more wind (the map and panels are dark, so light reads as strong).
+ * Anchored to the ranges riders think in: dim slate below 10 kn (it "isn't wind yet"), then 10–14, 14–18, 18–25 (prime),
+ * 25–30 and near-white from 30. Each step is flat across the core of its range and blends into its neighbour near the
+ * edges; lightness only ever rises, so the order reads without hue and for colour-blind riders. Hue stays ~212°, well
+ * apart from the `go` verdict's emerald (#34d399, ~158°).
  */
 const STOPS: [number, [number, number, number]][] = [
-  [0, [78, 86, 100]],                            // calm: dim grey
-  [4, [106, 114, 128]],
-  [10.5, [154, 161, 172]],                       // light grey
-  [12.5, [150, 206, 128]],                       // greening
-  [14, [92, 214, 84]], [16.5, [70, 196, 70]],    // 14–17: green
-  [18, [56, 142, 248]], [24.5, [72, 112, 252]],  // 18–25: blue
-  [26, [140, 92, 248]], [28.5, [160, 82, 246]],  // 26–29: purple
-  [30, [200, 48, 226]], [40, [226, 40, 196]],    // 30+: deep vivid purple-magenta
+  [0, [44, 58, 80]], [4, [52, 70, 98]], [9.5, [66, 92, 132]],     // <10: dim slate blue
+  [11, [70, 112, 170]], [13, [78, 126, 192]],                    // 10–14
+  [14.5, [92, 148, 226]], [17, [104, 160, 236]],                 // 14–18
+  [18.5, [132, 186, 250]], [24.5, [150, 198, 252]],              // 18–25: prime, bright
+  [25.5, [190, 220, 254]], [29, [204, 228, 255]],                // 25–30: pale
+  [30.5, [236, 245, 255]], [40, [250, 252, 255]],                // 30+: near white
 ];
 
 const rgbAt = (kn: number): [number, number, number] => {
