@@ -6,6 +6,7 @@ import { duration, ease } from "../lib/motion";
 import { MODEL_INFO, windColor } from "../lib/wind";
 import { labelWidth, markDrawn, shouldDrawIn, useSvgId } from "./charts/scale";
 import { useChartSize } from "./useChartSize";
+import { useWindScale } from "../lib/windScale";
 
 export type Area = { mean: number; peak: number; dir: number } | null;
 type Day = { i: number; label: string };
@@ -80,6 +81,7 @@ const Bars = memo(function Bars({ area, W, H, labelH, font, threshold, nbmFrom, 
   area: Area[]; W: number; H: number; labelH: number; font: number; threshold: number; nbmFrom: number; days: Day[]; nights: [number, number][];
   compact?: boolean;
 }) {
+  const scale = useWindScale();
   const gradId = useSvgId("strip");
   const last = Math.max(1, area.length - 1);
   const step = (W - FRAME) / last;
@@ -92,7 +94,7 @@ const Bars = memo(function Bars({ area, W, H, labelH, font, threshold, nbmFrom, 
   const stops = useMemo(() => Array.from({ length: 21 }, (_, k) => {
     const f = k / 20;
     return { offset: f, color: windColor(FULL_KN * Math.pow(f, 1 / CURVE)) };
-  }), []);
+  }), [scale]);
   const isNight = (i: number) => nights.some(([a, b]) => i >= a && i < b);
   const m = useMemo(() => ({ x, y }), [W, H, labelH, last]); // eslint-disable-line react-hooks/exhaustive-deps
 

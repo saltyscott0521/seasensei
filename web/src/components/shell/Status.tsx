@@ -84,15 +84,16 @@ export function StatusLine(props: StatusProps & { className?: string }) {
   );
 }
 
-/** Phones: the one piece of top-left chrome — the mark, the name and the wind-field status. */
+/** Phones: the top-left chrome beside the bell and the gear — the mark, the name and the wind-field status. */
 export function StatusPill({ hidden, ...props }: StatusProps & { hidden?: boolean }) {
   return (
     <div data-testid="status-pill" data-map-chrome
-      className={clsx("glass pointer-events-auto flex h-[46px] max-w-[calc(100vw-150px)] items-center gap-2.5 rounded-lg py-1.5 pl-1.5 pr-3.5",
+      className={clsx("glass pointer-events-auto flex h-[46px] max-w-[calc(100vw-204px)] items-center gap-2.5 rounded-lg py-1.5 pl-1.5 pr-3.5",
         "transition-[opacity,visibility] duration-200 ease-ui", hidden && "invisible opacity-0")}>
       <BrandMark size={32} className="rounded-[9px]" />
       <div className="min-w-0 leading-tight">
-        <div className="text-label font-semibold tracking-tight text-fg">SeaSensei</div>
+        {/* Under 360 px the bell and the gear leave room for the mark and the status only (the mark is the name). */}
+        <div className="text-label font-semibold tracking-tight text-fg max-[359px]:sr-only">SeaSensei</div>
         <StatusLine {...props} className="text-micro text-fg-2" />
       </div>
     </div>

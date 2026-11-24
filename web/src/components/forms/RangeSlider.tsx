@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { useId } from "react";
 import { windColor, windGradient } from "../../lib/wind";
 import { FieldHeader, sliderRootClass, sliderThumbClass, thumbLeft, Unit } from "./Field";
+import { useWindScale } from "../../lib/windScale";
 
 const MIN = 5, MAX = 45;
 const TICKS = [5, 15, 25, 35, 45];
@@ -13,6 +14,7 @@ const TICKS = [5, 15, 25, 35, 45];
  * and announce "15 knots".
  */
 export function RangeSlider({ value, onChange }: { value: [number, number]; onChange: (v: [number, number]) => void }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const id = useId();
   const [lo, hi] = value;
   return (

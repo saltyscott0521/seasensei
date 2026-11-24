@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { useMap } from "react-map-gl/maplibre";
 import { windColor, type WindGrid } from "../lib/wind";
 import { useReducedMotion } from "./map/reducedMotion";
+import { useWindScale } from "../lib/windScale";
 
 /** The part of the map that chrome leaves visible (the map padding). Particles are spawned there. */
 export type Inset = { top: number; right: number; bottom: number; left: number };
@@ -45,6 +46,7 @@ const STATIC_ALPHA = 0.42;
  * Under prefers-reduced-motion it draws a still field instead of animating.
  */
 export function WindParticles({ grid, inset, paused = false }: { grid: WindGrid | undefined; inset?: Inset; paused?: boolean }) {
+  const scale = useWindScale();
   const { current } = useMap();
   const reduced = useReducedMotion();
   const gridRef = useRef(grid);
@@ -58,7 +60,7 @@ export function WindParticles({ grid, inset, paused = false }: { grid: WindGrid 
     const e = createEngine(map, { reduced, grid: () => gridRef.current, inset: () => insetRef.current, paused: () => pausedRef.current });
     engine.current = e;
     return () => { e.destroy(); engine.current = null; };
-  }, [current, reduced]);
+  }, [current, reduced, scale]); // a new scale rebuilds the engine, whose stroke colours are built once
   useEffect(() => { pausedRef.current = paused; engine.current?.pausedChanged(); }, [paused]);
 
   useEffect(() => { gridRef.current = grid; engine.current?.gridChanged(); }, [grid]);

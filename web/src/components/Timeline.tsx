@@ -10,6 +10,7 @@ import { fmtWhen, fmtWhenLong, hourOfDay, nightSpans } from "./charts/scale";
 import { Skeleton } from "./bits";
 import { Button, Chip, IconButton } from "./ui";
 import { WindStrip, type Area, type StripSize } from "./WindStrip";
+import { useWindScale } from "../lib/windScale";
 
 const HOUR = 3600e3;
 const SCALE_MAX = 45; // windGradient() spans 0–45 kn
@@ -205,6 +206,7 @@ const knots = (a: NonNullable<Area>) => {
 
 /** The map's colour scale, compact: a 4px gradient bar with 0 / 10 / 20 / 30 / 40+ kn under it (0 / 20 / 40+ when narrow). */
 function Scale() {
+  useWindScale(); // redraw when the rider picks another colour scale
   return (
     <div className="relative w-[112px] shrink-0 pr-3 @max-[200px]:w-[88px]" title="Wind speed on the map, knots">
       <i aria-hidden className="block h-1 rounded-full" style={{ background: windGradient() }} />

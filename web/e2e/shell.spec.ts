@@ -378,3 +378,36 @@ test("the timeline's track is the week's wind: one bar per hour in the map's col
   await expect(slider).toHaveAttribute("aria-valuenow", "0");
   await expect(page.getByTestId("timeline-when")).toHaveText("Now");
 });
+
+test("the gear beside the bell opens settings, and picking a wind colour scale repaints the app and sticks", async ({ page }) => {
+  const legend = page.locator('[title="Wind speed on the map, knots"] i').first();
+  const blue = await legend.evaluate((el) => getComputedStyle(el).backgroundImage);
+  const gear = panel(page).getByRole("button", { name: "App settings", exact: true });
+  await gear.click();
+  const pop = page.getByRole("dialog", { name: "Settings" });
+  await expect(pop).toBeVisible();
+  const group = pop.getByRole("group", { name: "Wind colours" });
+  await expect(group.getByRole("radio")).toHaveCount(3);
+  await expect(group.getByRole("radio", { name: /^Blue/ })).toBeChecked();
+
+  await group.getByText("Spectrum", { exact: true }).click();
+  await expect(group.getByRole("radio", { name: /^Spectrum/ })).toBeChecked();
+  await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).not.toBe(blue); // the timeline's legend follows at once
+  const spectrum = await legend.evaluate((el) => getComputedStyle(el).backgroundImage);
+  expect(spectrum).toContain("rgb(98, 196, 72)"); // its green
+
+  // one popover at a time: the bell swaps it for the briefing; Escape closes
+  await panel(page).getByRole("button", { name: "Morning briefing" }).click();
+  await expect(pop).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Morning briefing" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  // the choice is this device's, kept across visits
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Fort De Soto" })).toBeVisible();
+  await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).toBe(spectrum);
+  await gear.click();
+  await page.getByRole("dialog", { name: "Settings" }).getByText("Turbo", { exact: true }).click();
+  await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).toContain("rgb(126, 255, 85)");
+});

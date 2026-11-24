@@ -27,8 +27,12 @@ Software WebGL makes runs slow: use `--trace off --workers=2`. Don't edit `src/`
   surfaces (`bg-surface-1/2/3`), text (`text-fg`, `-fg-2`, `-fg-3`: the faintest allowed), `accent`, verdict colours
   (`go`, `soon`, `off`, `strong`, `wrongdir`), radii, type sizes (`text-micro` … `text-display`). Colour is data: chrome is neutral;
   only the wind scale, verdicts and the accent carry colour. The wind scale (`windColor`/`windGradient`/`windStops` in `lib/wind.ts`, used by
-  everything: particles, markers, strip, hour grid, charts, legend) is one blue (hue ~212°) that brightens with the wind: dim slate
-  (<10 kn) → 10–14 → 14–18 → bright 18–25 (prime) → pale 25–30 → near-white 30+; lightness only rises (`spot.spec.ts` checks hue and order). Use the primitives (Button, IconButton, Chip, Card, Segmented,
+  everything: particles, markers, strip, hour grid, charts, legend) is the rider's pick from `WIND_SCALES` (settings, below): `blue` (the default:
+  one blue, hue ~212°, that only brightens with the wind: dim slate <10 kn → 10–14 → 14–18 → bright 18–25 prime → pale 25–30 → near-white 30+;
+  `spot.spec.ts` checks hue and order), `turbo` (Google's Turbo, ends trimmed for the dark map) or `spectrum` (grey, yellow, green, orange, red,
+  purple, one per range). `lib/windScale.ts` keeps the pick (localStorage `windScale`), applies it before the first render (`main.tsx` imports it
+  first) and on change; every component that draws with the scale calls `useWindScale()` so memoised ones redraw too, and colour caches key on
+  it (WindStrip's stops, WindParticles' engine). A new consumer must do the same. The server engine (briefing, widget's `windHex`) always uses blue. Use the primitives (Button, IconButton, Chip, Card, Segmented,
   VerdictPill, ConfidenceDots, Ribbon, …) instead of ad-hoc `text-white/NN`. `.num` is Geist with tabular figures (no mono).
 - **Motion** (`src/lib/motion.ts`): duration/spring/ease tokens; `<MotionConfig reducedMotion="user">` wraps the app. Animate
   opacity/transform only, never `x` inside a scroll container; charts draw in once; rotations take the shortest path.
@@ -42,8 +46,11 @@ Software WebGL makes runs slow: use `--trace off --workers=2`. Don't edit `src/`
   `useSpotNow().pill` is that answer (cards and map markers both use it).
 - **One clock** (`src/lib/time.tsx`): the timeline's chosen hour is `useAt()` (null = now); map, cards, hero, hour grid and chart
   cursors all follow it. Anything may ask for an hour with `requestAt(t)`; the shell listens with `onAtRequest`.
+- **Settings** (`shell/Settings.tsx`): a gear beside the briefing's bell (panel header on desktop; map chrome on phones, with an sr-only
+  twin in the sheet) opens a `MapPopover` (`shell/MapPopover.tsx`, shared with the briefing; one popover at a time) holding app-wide choices,
+  for now the wind colour scale. Under 360 px wide the status pill drops its wordmark so the pill, bell and gear keep one row.
 - **Shell** (`App.tsx`, `components/shell/`, `lib/layout.ts`): desktop = docked glass panel + timeline dock; phones = status pill,
-  with the morning briefing's bell beside it, one control rail (Add a spot, Stations, Find my location — no zoom buttons, pinch zooms), the vaul sheet (handle 80 px — the grabber and the day's answer in one line,
+  with the morning briefing's bell and the settings gear beside it, one control rail (Add a spot, Stations, Find my location — no zoom buttons, pinch zooms), the vaul sheet (handle 80 px — the grabber and the day's answer in one line,
   `shell/SheetSummary.tsx` — / rest 320 px / mid / full, all in px and strictly rising; the app opens at rest; a grabber button, its
   arrow keys move a snap; `data-snap` is the snap's name) with the timeline always floating above its top edge, never in its content
   (`phoneTimeline()` in `layout.ts`: `tall` — a taller strip — at the handle, `normal` at rest/mid, `compact` where only that fits under the

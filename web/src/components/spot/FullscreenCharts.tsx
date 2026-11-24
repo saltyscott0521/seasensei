@@ -10,6 +10,7 @@ import { IconButton } from "../ui";
 import { ChartHeader, type ChartView } from "./ChartCard";
 import { Dotted } from "./Dotted";
 import { SpotFacts } from "./SpotHeader";
+import { useWindScale } from "../../lib/windScale";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -22,6 +23,7 @@ export function FullscreenCharts({ spot, view, setView, range, setRange, shown, 
   spot: Spot; view: ChartView; setView: (v: ChartView) => void; range: Range; setRange: (r: Range) => void;
   shown: { speed: number; gust: number; dir: number } | null; when: string; confidence: Confidence | null; onClose: () => void; children: ReactNode;
 }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const ref = useRef<HTMLDivElement>(null);
   // Capture phase + stopPropagation, so App's Escape (back to the list) doesn't fire too. Pass a stable onClose.
   useEffect(() => {

@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MotionConfig } from "motion/react";
+import "./lib/windScale"; // applies the rider's wind colour scale before anything draws
 import App from "./App";
 import { UpdateBoundary } from "./components/shell/UpdateBoundary";
 import { persistQueries } from "./lib/persist";

@@ -7,6 +7,7 @@ import { compass, windColor, type Hour, type Spot } from "../../lib/wind";
 import { hourState } from "../home/board";
 import { Skeleton } from "../bits";
 import { RIBBON_WORDS, SectionHeader, type RibbonState } from "../ui";
+import { useWindScale } from "../../lib/windScale";
 
 const HOUR = 3600e3;
 const COL = 28; // px per hour: 12+ hours across a phone
@@ -65,6 +66,7 @@ const shortHour = (label: string) => {
  * charts' cursor, else the timeline's) in view, and a tap on an hour puts the one clock there.
  */
 function HourGridImpl({ hours, tz, spot, highlightT }: { hours: Hour[]; tz: string; spot: Spot; highlightT?: number }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const clock = useNow();
   const canSet = useCanSetAt();
   const start = Math.floor(clock / HOUR) * HOUR;
@@ -158,6 +160,7 @@ function HourGridImpl({ hours, tz, spot, highlightT }: { hours: Hour[]; tz: stri
 }
 
 const HourTable = memo(function HourTable({ cols, tz, clock }: { cols: Col[]; tz: string; clock: number }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   // Day spans for the top row.
   const days: { key: number; label: string; n: number }[] = [];
   for (const c of cols) {

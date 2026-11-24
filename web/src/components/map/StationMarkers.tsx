@@ -6,6 +6,7 @@ import { duration, ease } from "../../lib/motion";
 import { ago } from "../../lib/session";
 import { compass, windColor, type LiveReading } from "../../lib/wind";
 import { WindArrow } from "../bits";
+import { useWindScale } from "../../lib/windScale";
 
 /** A reading older than this reads as stale: NOAA PORTS reports every 6 min, airports about hourly. */
 const staleAfter = (r: LiveReading) => (r.source === "airport" ? 90 : 30) * 60_000;
@@ -48,6 +49,7 @@ export const StationMarkers = memo(function StationMarkers({ readings, hidden, o
 const StationMarker = memo(function StationMarker({ r, open, hidden, dim, offscreen, onToggle }: {
   r: LiveReading; open: boolean; hidden: boolean; dim: boolean; offscreen: boolean; onToggle: (id: string) => void;
 }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const n = Math.round(r.speed);
   const stale = Date.now() - r.t > staleAfter(r);
   const label = `${r.name}: ${n} knots from ${compass(r.dir)}${r.gust != null ? `, gusting ${Math.round(r.gust)}` : ""}, ${ago(r.t)}`;

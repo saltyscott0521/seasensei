@@ -8,6 +8,7 @@ import { useSpotNow } from "../../lib/useSpotNow";
 import { nearestHour, windColor, type Hour, type Spot } from "../../lib/wind";
 import { WindArrow } from "../bits";
 import { capitalise, markerState, TONE_BG, TONE_RING, TONE_TEXT, TONE_TIP, type MarkerGlyph } from "./markerState";
+import { useWindScale } from "../../lib/windScale";
 
 const EMPTY: Hour[] = [];
 
@@ -45,6 +46,7 @@ const RANK_Z = ["z-[5]", "z-[4]", "z-[3]", "z-[2]"];
  * <button> per spot; the button is named `${name}, ${n} knots, ${verdict}`.
  */
 export const SpotMarker = memo(function SpotMarker({ spot, selected, highlighted, dim, offscreen, at, labels, rank, onSelect }: Props) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const live = useSpotNow(spot);
   const hours = live.fc.data?.hours ?? EMPTY;
   const hour = at != null ? nearestHour(hours, at) : null;

@@ -7,6 +7,7 @@ import { setPrimaryModel, usePrimaryModel } from "../lib/data";
 import { turn, useUnwrappedAngle } from "../lib/motion";
 import { CHAIN_PLAIN, chainLabel, compass, MODEL_INFO, PRIMARY_MODELS, windColor, type Model, type Ride } from "../lib/wind";
 import { VerdictPill, type VerdictState } from "./ui/VerdictPill";
+import { useWindScale } from "../lib/windScale";
 
 /**
  * Arrow pointing DOWNWIND (where the wind is going). It turns the short way round (350° → 10° is +20°) on a CSS
@@ -37,6 +38,7 @@ const R = 47; // ring radius
  * @example <Dial dir={shown.dir} speed={shown.speed} arc={spot} />
  */
 export function Dial({ dir, speed, size = 132, arc }: { dir: number; speed: number; size?: number; arc?: { dirC?: number; dirW?: number } }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const ticks = Array.from({ length: 72 }, (_, i) => i * 5);
   const c = windColor(speed);
   const glow = `dialglow-${useId().replace(/[^\w-]/g, "")}`; // unique: several dials may share a page

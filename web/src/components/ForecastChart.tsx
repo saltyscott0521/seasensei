@@ -6,6 +6,7 @@ import { DayNight, DrawIn, Handoffs, HatchDef, NowLine, Pill, RangeLines, Sessio
 import { forecastSummary, fmtWhen, HOUR, nearestIndex, nightSpans, sessionSpans, speedTicks, speedTop, timeAxis, useSvgId } from "./charts/scale";
 import { useScrub } from "./charts/useScrub";
 import { useChartSize } from "./useChartSize";
+import { useWindScale } from "../lib/windScale";
 
 export type Range = "24h" | "48h" | "7d";
 /** Plot margins shared by the line and bar charts, so their time axes line up exactly. */
@@ -30,6 +31,7 @@ const LABEL: Record<Range, string> = { "24h": "Past 24 hours, forecast versus ac
 export const ForecastChart = memo(function ForecastChart({ forecast, spot, onScrub, range, obs, scrubT, maxH = 560, minH = 250 }: {
   forecast: Forecast; spot: Spot; onScrub: (h: Hour | null) => void; range: Range; obs?: Obs[]; scrubT?: number | null; maxH?: number; minH?: number;
 }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const now = useNow();
   const at = useAt();
   const shared = scrubT ?? at; // the parent's cursor, else the timeline's hour

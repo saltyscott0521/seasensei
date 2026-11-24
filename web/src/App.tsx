@@ -13,6 +13,7 @@ import { MapActions, RailActions } from "./components/shell/MapActions";
 import { Panel } from "./components/shell/Panel";
 import { Sheet, sheetEscapes, type TimelinePlace } from "./components/shell/Sheet";
 import { BriefingBell, BriefingEntry, BriefingPopover } from "./components/home/BriefingBell";
+import { SettingsButton, SettingsEntry, SettingsPopover } from "./components/shell/Settings";
 import { SheetSummary } from "./components/shell/SheetSummary";
 import { PanelBrand, status, StatusPill } from "./components/shell/Status";
 import { UpdateBoundary } from "./components/shell/UpdateBoundary";
@@ -317,13 +318,16 @@ export default function App() {
   const [said, setSaid] = useState({ tone: st.tone, text: "" });
   if (said.tone !== st.tone) setSaid({ tone: st.tone, text: st.text });
 
-  // The morning briefing: one popover, opened from the bell (map chrome on phones, the panel header on desktop) or,
-  // on phones, its twin inside the sheet for keyboards and screen readers.
-  const [briefingOpen, setBriefingOpen] = useState(false);
-  const toggleBriefing = useCallback(() => setBriefingOpen((o) => !o), []);
-  const closeBriefing = useCallback(() => setBriefingOpen(false), []);
-  const briefingId = useId();
+  // The morning briefing and the app settings: one popover at a time, opened from the bell or the gear beside it (map
+  // chrome on phones, the panel header on desktop) or, on phones, their twins inside the sheet for keyboards and screen readers.
+  const [popover, setPopover] = useState<"briefing" | "settings" | null>(null);
+  const toggleBriefing = useCallback(() => setPopover((o) => (o === "briefing" ? null : "briefing")), []);
+  const toggleSettings = useCallback(() => setPopover((o) => (o === "settings" ? null : "settings")), []);
+  const closePopover = useCallback(() => setPopover(null), []);
+  const briefingOpen = popover === "briefing", settingsOpen = popover === "settings";
+  const briefingId = useId(), settingsId = useId();
   const bellProps = { open: briefingOpen, onToggle: toggleBriefing, panelId: briefingId };
+  const gearProps = { open: settingsOpen, onToggle: toggleSettings, panelId: settingsId };
   const popoverStyle: CSSProperties = desktop
     ? { top: EDGE, left: EDGE + panelWidth(vw) + 12, width: 360 }
     : { top: sat + CHROME_TOP + PILL_H + 8, left: 12, width: Math.min(400, vw - 24) };
@@ -343,7 +347,7 @@ export default function App() {
             timeline rather than walking every map marker first. */}
         {desktop && (
           <>
-            <Panel header={<div className="flex items-center justify-between gap-3"><PanelBrand {...statusProps} /><BriefingBell variant="panel" {...bellProps} /></div>} scrollRef={scrollRef} onScroll={onScroll} scrolled={scrolled}>{alertEl}{panel}</Panel>
+            <Panel header={<div className="flex items-center justify-between gap-3"><PanelBrand {...statusProps} /><div className="flex shrink-0 items-center gap-1"><BriefingBell variant="panel" {...bellProps} /><SettingsButton variant="panel" {...gearProps} /></div></div>} scrollRef={scrollRef} onScroll={onScroll} scrolled={scrolled}>{alertEl}{panel}</Panel>
             {!adding && <div ref={dockRef} className="absolute bottom-4 z-10" style={{ left: dockLeft, width: dockW }}>{timelineEl}</div>}
             <div className="absolute right-4 top-4 z-10">
               <MapActions {...actions} />
@@ -369,6 +373,7 @@ export default function App() {
               <div className="flex min-w-0 items-start gap-2">
                 <StatusPill {...statusProps} hidden={pillHidden} />
                 <BriefingBell variant="map" {...bellProps} hidden={pillHidden} />
+                <SettingsButton variant="map" {...gearProps} hidden={pillHidden} />
               </div>
               <RailActions {...actions} hidden={railHidden} />
             </div>
@@ -378,13 +383,14 @@ export default function App() {
         {!desktop && (
           <Sheet snaps={snaps} index={snap} onIndex={setSnap} timeline={timelineEl} place={place}
             scrollRef={scrollRef} onScroll={onScroll} floatRef={floatRef} status={said.text} summary={summaryEl}
-            briefing={<BriefingEntry {...bellProps} />}>
+            briefing={<><BriefingEntry {...bellProps} /><SettingsEntry {...gearProps} /></>}>
             {alertEl}
             {panel}
           </Sheet>
         )}
 
-        <BriefingPopover open={briefingOpen} onClose={closeBriefing} panelId={briefingId} style={popoverStyle} />
+        <BriefingPopover open={briefingOpen} onClose={closePopover} panelId={briefingId} style={popoverStyle} />
+        <SettingsPopover open={settingsOpen} onClose={closePopover} panelId={settingsId} style={popoverStyle} />
 
         {dialogUsed && (
           <UpdateBoundary variant="overlay" open={discussion != null} onClose={close}>

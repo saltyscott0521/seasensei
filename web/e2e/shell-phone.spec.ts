@@ -452,3 +452,23 @@ test("phone: a location that arrives after Add was cancelled is dropped (no pin,
   const after = (await marker.boundingBox())!;
   expect(Math.abs(after.x - before.x) + Math.abs(after.y - before.y)).toBeLessThan(2);
 });
+
+test("phone: the settings gear sits beside the bell, outside the sheet, and opens over the map", async ({ page }) => {
+  const gear = page.getByTestId("settings-button"), bell = page.getByTestId("briefing-bell");
+  await expect(gear).toBeInViewport();
+  await expect(page.getByTestId("status-pill")).toContainText("Now · SeaSensei forecast"); // the pill's settled width
+  await expect(sheet(page).getByTestId("settings-button")).toHaveCount(0);
+  const [g, b] = [await box(gear), await box(bell)];
+  expect(g.width).toBeGreaterThanOrEqual(44);
+  expect(Math.abs(g.y - b.y)).toBeLessThanOrEqual(1);
+  expect(g.x).toBeGreaterThanOrEqual(b.x + b.width);
+  await gear.tap();
+  const pop = page.getByRole("dialog", { name: "Settings" });
+  await expect(pop).toBeVisible();
+  expect(await pop.evaluate((el) => !!el.closest("[data-vaul-drawer]"))).toBe(false);
+  await pop.getByText("Spectrum", { exact: true }).tap();
+  await expect(pop.getByRole("radio", { name: /^Spectrum/ })).toBeChecked();
+  await expect(sheet(page)).toHaveAttribute("data-snap", "rest");
+  await pop.getByRole("button", { name: "Close app settings" }).tap();
+  await expect(pop).toHaveCount(0);
+});

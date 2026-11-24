@@ -12,6 +12,7 @@ import { Skeleton, WindArrow } from "../bits";
 import { capitalise, markerState, TONE_TEXT } from "../map/markerState";
 import { Button, cardClass, ConfidenceDots, Ribbon, RIBBON_WORDS, VerdictPill, type RibbonState } from "../ui";
 import { allSessions, dayRibbon, noneDetail, weekCells, type WeekCell } from "./board";
+import { useWindScale } from "../../lib/windScale";
 
 const fade = { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: duration.base, ease } };
 const HOUR = 3600e3;
@@ -175,6 +176,7 @@ function Answer({ id, go, answer }: { id: string; go: boolean; answer: AnswerTex
  * state in the map marker's words (one function says both), in the marker's colour.
  */
 function Reading({ id, spot, sn, tz, now }: { id: string; spot: Spot; sn: ReturnType<typeof useSpotNow>; tz: string | undefined; now: number }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const s = sn.shown;
   if (!s) return sn.fc.isError ? null : <Skeleton className="ml-auto h-4 w-24" />;
   const scrubbed = sn.at != null && tz;

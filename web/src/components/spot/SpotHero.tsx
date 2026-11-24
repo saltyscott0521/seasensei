@@ -11,6 +11,7 @@ import { Button, Chip, VerdictPill } from "../ui";
 import { Dotted } from "./Dotted";
 import { errorText } from "./format";
 import { OFFSHORE_CAUTION, shoreWord } from "./shore";
+import { useWindScale } from "../../lib/windScale";
 
 type SpotNow = ReturnType<typeof useSpotNow>;
 
@@ -53,6 +54,7 @@ export function SpotHero({ spot, pill, shown, when, source, scrubbing, now, mode
   retrying?: boolean;
   stationError: Error | null;
 }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const live = source === "station" || source === "stale" || source === "nearby" || source === "far";
   // A forecast hour comes with the range it is likely to fall in; a sensor reading is what it is.
   const range = !live && shown ? fmtRange(shown) : null;
@@ -191,6 +193,7 @@ function RangeFit({ spot, speed, dir, dark, instant, where }: {
   /** The reading isn't the spot's own, or isn't fresh: say whose word this is ("at the nearby sensor"). */
   where?: string | null;
 }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const ride = rideState(speed, spot, dir);
   // Off by less than half a knot rounds to 0: say "just under" rather than "0 kn under".
   const under = Math.round(spot.min - speed), over = Math.round(speed - spot.max);

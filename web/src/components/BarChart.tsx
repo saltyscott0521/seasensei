@@ -8,6 +8,7 @@ import { HOUR, nearestIndex, nightSpans, sessionSpans, speedTicks, speedTop, tim
 import { useScrub } from "./charts/useScrub";
 import { L, R, T, windowFor, type Range } from "./ForecastChart";
 import { useChartSize } from "./useChartSize";
+import { useWindScale } from "../lib/windScale";
 
 const STRIP = 7;  // the per-hour status strip under the bars (height is part of the contract: e2e looks for rect[height=7])
 const ARROWS = 14; // direction row under the strip
@@ -143,6 +144,7 @@ type Row = { h: Hour; st: Status; day: boolean; lit: boolean };
 
 /** One hour's gust cap and bar. The speed bar's fill is exactly windColor(speed): its opacity is separate. */
 function Bar({ row, x, y, barW, full = false }: { row: Row; x: (t: number) => number; y: (v: number) => number; barW: number; full?: boolean }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const { h, st, lit } = row;
   const bx = x(h.t) - barW / 2, base = y(0), sy = y(h.speed), gy = y(h.gust), rx = Math.min(2, barW / 2);
   const op = full ? 1 : (lit ? 1 : 0.5) * (st === "offdir" ? 0.7 : 1);
@@ -180,6 +182,7 @@ const Bars = memo(function Bars({ rows, x, y, barW, slot, stripY, arrowY, every,
  * bar tops, the station's readings, your sessions, night), then what the strip under the bars says about each hour.
  */
 function ChartKey({ station }: { station: boolean }) {
+  useWindScale(); // redraw when the rider picks another colour scale
   const item = (swatch: ReactNode, word: string) => (
     <li className="flex items-center gap-1.5 whitespace-nowrap"><span aria-hidden className="flex items-center gap-0.5">{swatch}</span>{word}</li>
   );

@@ -328,28 +328,63 @@ export function sample(g: WindGrid, lat: number, lon: number) {
   return { u, v, speed: Math.hypot(u, v) };
 }
 
-/**
- * Wind speed → colour: one blue, brighter with more wind (the map and panels are dark, so light reads as strong).
- * Anchored to the ranges riders think in: dim slate below 10 kn (it "isn't wind yet"), then 10–14, 14–18, 18–25 (prime),
- * 25–30 and near-white from 30. Each step is flat across the core of its range and blends into its neighbour near the
- * edges; lightness only ever rises, so the order reads without hue and for colour-blind riders. Hue stays ~212°, well
- * apart from the `go` verdict's emerald (#34d399, ~158°).
- */
-const STOPS: [number, [number, number, number]][] = [
-  [0, [44, 58, 80]], [4, [52, 70, 98]], [9.5, [66, 92, 132]],     // <10: dim slate blue
-  [11, [70, 112, 170]], [13, [78, 126, 192]],                    // 10–14
-  [14.5, [92, 148, 226]], [17, [104, 160, 236]],                 // 14–18
-  [18.5, [132, 186, 250]], [24.5, [150, 198, 252]],              // 18–25: prime, bright
-  [25.5, [190, 220, 254]], [29, [204, 228, 255]],                // 25–30: pale
-  [30.5, [236, 245, 255]], [40, [250, 252, 255]],                // 30+: near white
-];
+type Stops = [number, [number, number, number]][];
+export type WindScale = "blue" | "turbo" | "spectrum";
 
-const rgbAt = (kn: number): [number, number, number] => {
-  if (kn <= STOPS[0][0]) return STOPS[0][1];
-  if (kn >= STOPS[STOPS.length - 1][0]) return STOPS[STOPS.length - 1][1];
+/**
+ * Wind speed → colour. The rider picks the scale (settings; `lib/windScale.ts` keeps the choice, default blue); every
+ * consumer reads it through windColor / windGradient / windStops. All three are anchored to the ranges riders think in
+ * (<10, 10–14, 14–18, 18–25 prime, 25–30, 30+): each step flat across the core of its range, blending near the edges.
+ * - blue: one blue (hue ~212°) that only brightens with the wind (the map and panels are dark, so light reads as strong);
+ *   reads without hue, for colour-blind riders too, and stays well apart from the `go` verdict's emerald (#34d399, ~158°).
+ * - turbo: Google's Turbo rainbow, the look of most wind maps; its darkest ends are trimmed so calm and storm still show on the dark map.
+ * - spectrum: grey, yellow, green, orange, red, purple, one per range. Its green leans yellow (~105°) so it never reads as `go`.
+ */
+export const WIND_SCALES: Record<WindScale, { label: string; note: string; stops: Stops }> = {
+  blue: {
+    label: "Blue", note: "One colour, brighter with more wind",
+    stops: [
+      [0, [44, 58, 80]], [4, [52, 70, 98]], [9.5, [66, 92, 132]],     // <10: dim slate blue
+      [11, [70, 112, 170]], [13, [78, 126, 192]],                    // 10–14
+      [14.5, [92, 148, 226]], [17, [104, 160, 236]],                 // 14–18
+      [18.5, [132, 186, 250]], [24.5, [150, 198, 252]],              // 18–25: prime, bright
+      [25.5, [190, 220, 254]], [29, [204, 228, 255]],                // 25–30: pale
+      [30.5, [236, 245, 255]], [40, [250, 252, 255]],                // 30+: near white
+    ],
+  },
+  turbo: {
+    label: "Turbo", note: "Rainbow, like most wind maps",
+    stops: [
+      [0, [64, 71, 169]], [4, [68, 122, 233]], [8, [50, 171, 239]], [12, [34, 212, 203]], [16, [55, 242, 150]], [20, [126, 255, 85]],
+      [24, [184, 243, 57]], [28, [233, 203, 55]], [32, [248, 143, 39]], [36, [229, 82, 16]], [40, [185, 34, 3]],
+    ],
+  },
+  spectrum: {
+    label: "Spectrum", note: "Grey, yellow, green, orange, red, purple",
+    stops: [
+      [0, [78, 86, 100]], [4, [106, 114, 128]], [9.5, [150, 156, 166]], // <10: grey
+      [11, [232, 208, 72]], [13, [240, 212, 64]],                       // 10–14: yellow
+      [14.5, [124, 206, 80]], [17, [98, 196, 72]],                      // 14–18: green
+      [18.5, [250, 148, 52]], [24.5, [246, 124, 40]],                   // 18–25: orange
+      [25.5, [236, 68, 60]], [29, [222, 50, 54]],                       // 25–30: red
+      [30.5, [178, 76, 228]], [40, [204, 64, 238]],                     // 30+: purple
+    ],
+  },
+};
+export const WIND_SCALE_IDS = Object.keys(WIND_SCALES) as WindScale[];
+export const DEFAULT_WIND_SCALE: WindScale = "blue";
+export const isWindScale = (v: unknown): v is WindScale => typeof v === "string" && v in WIND_SCALES;
+
+let STOPS: Stops = WIND_SCALES[DEFAULT_WIND_SCALE].stops;
+/** Switch the scale every windColor/windGradient/windStops call uses from now on (the client's store calls this). */
+export function setWindScale(id: WindScale) { STOPS = (WIND_SCALES[id] ?? WIND_SCALES[DEFAULT_WIND_SCALE]).stops; }
+
+const rgbAt = (kn: number, stops: Stops = STOPS): [number, number, number] => {
+  if (kn <= stops[0][0]) return stops[0][1];
+  if (kn >= stops[stops.length - 1][0]) return stops[stops.length - 1][1];
   let i = 0;
-  while (kn > STOPS[i + 1][0]) i++;
-  const [k0, c0] = STOPS[i], [k1, c1] = STOPS[i + 1];
+  while (kn > stops[i + 1][0]) i++;
+  const [k0, c0] = stops[i], [k1, c1] = stops[i + 1];
   const t = (kn - k0) / (k1 - k0);
   return [0, 1, 2].map((j) => Math.round(c0[j] + (c1[j] - c0[j]) * t)) as [number, number, number];
 };
@@ -363,9 +398,9 @@ export function windColor(kn: number, alpha = 1) {
 export const windHex = (kn: number) => `#${rgbAt(kn).map((c) => c.toString(16).padStart(2, "0")).join("")}`;
 
 const SCALE_MAX = 45;
-/** CSS gradient of the scale (0–45 kn) for legends and slider tracks. */
-export const windGradient = (dir = "90deg") =>
-  `linear-gradient(${dir},${STOPS.map(([k, c]) => `rgb(${c.join(",")}) ${(k / SCALE_MAX) * 100}%`).join(",")})`;
+/** CSS gradient of the scale (0–45 kn) for legends and slider tracks; `scale` draws another one (the settings' previews). */
+export const windGradient = (dir = "90deg", scale?: WindScale) =>
+  `linear-gradient(${dir},${(scale ? WIND_SCALES[scale].stops : STOPS).map(([k, c]) => `rgb(${c.join(",")}) ${(k / SCALE_MAX) * 100}%`).join(",")})`;
 
 /** SVG gradient stops for a chart whose y-axis runs 0..top knots (offset 0 = bottom). */
 export function windStops(top: number) {
