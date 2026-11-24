@@ -29,8 +29,10 @@ Software WebGL makes runs slow: use `--trace off --workers=2`. Don't edit `src/`
   only the wind scale, verdicts and the accent carry colour. The wind scale (`windColor`/`windGradient`/`windStops` in `lib/wind.ts`, used by
   everything: particles, markers, strip, hour grid, charts, legend) is the rider's pick from `WIND_SCALES` (settings, below): `blue` (the default:
   one blue, hue ~212°, that only brightens with the wind: dim slate <10 kn → 10–14 → 14–18 → bright 18–25 prime → pale 25–30 → near-white 30+;
-  `spot.spec.ts` checks hue and order), `turbo` (Google's Turbo, ends trimmed for the dark map) or `spectrum` (grey, yellow, green, orange, red,
-  purple, one per range). `lib/windScale.ts` keeps the pick (localStorage `windScale`), applies it before the first render (`main.tsx` imports it
+  `spot.spec.ts` checks hue and order), `turbo` (Google's Turbo, ends trimmed for the dark map) or `spectrum` (grey <10, light blue 10–12, blue 12–14,
+  green 14–17, yellow 17–20, orange 20–25, red 25–28, purple 28+). On every scale, 25 kn+ (`pulses()`, rounded as shown) breathes: the
+  `.wind-pulse` class (theme.css; paused under a covered map, still for reduced motion) on the spot and station markers' wind mark, a card's
+  reading arrow and the spot hero's glow — the wind now / at the chosen hour, never the hour grid or charts. `lib/windScale.ts` keeps the pick (localStorage `windScale`), applies it before the first render (`main.tsx` imports it
   first) and on change; every component that draws with the scale calls `useWindScale()` so memoised ones redraw too, and colour caches key on
   it (WindStrip's stops, WindParticles' engine). A new consumer must do the same. The server engine (briefing, widget's `windHex`) always uses blue. Use the primitives (Button, IconButton, Chip, Card, Segmented,
   VerdictPill, ConfidenceDots, Ribbon, …) instead of ad-hoc `text-white/NN`. `.num` is Geist with tabular figures (no mono).

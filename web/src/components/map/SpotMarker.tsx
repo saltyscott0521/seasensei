@@ -5,7 +5,7 @@ import { memo } from "react";
 import { Marker } from "react-map-gl/maplibre";
 import { spring } from "../../lib/motion";
 import { useSpotNow } from "../../lib/useSpotNow";
-import { nearestHour, windColor, type Hour, type Spot } from "../../lib/wind";
+import { nearestHour, pulses, windColor, type Hour, type Spot } from "../../lib/wind";
 import { WindArrow } from "../bits";
 import { capitalise, markerState, TONE_BG, TONE_RING, TONE_TEXT, TONE_TIP, type MarkerGlyph } from "./markerState";
 import { useWindScale } from "../../lib/windScale";
@@ -94,7 +94,8 @@ export const SpotMarker = memo(function SpotMarker({ spot, selected, highlighted
               // On later today: the go ring, softened (hollow); on now: the full go ring.
               state.hollow ? "ring-go/55" : TONE_RING[state.tone],
             )}>
-            <span className="grid size-6 place-items-center rounded-full"
+            <span className={clsx("grid size-6 place-items-center rounded-full", n != null && pulses(shown!.speed) && "wind-pulse")}
+              data-wind-pulse={n != null && pulses(shown!.speed) || undefined}
               style={n != null ? { background: windColor(shown!.speed, 0.2), color: windColor(shown!.speed) } : undefined}>
               {shown
                 ? <WindArrow dir={shown.dir} size={13} />

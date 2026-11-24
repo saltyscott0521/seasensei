@@ -338,7 +338,8 @@ export type WindScale = "blue" | "turbo" | "spectrum";
  * - blue: one blue (hue ~212°) that only brightens with the wind (the map and panels are dark, so light reads as strong);
  *   reads without hue, for colour-blind riders too, and stays well apart from the `go` verdict's emerald (#34d399, ~158°).
  * - turbo: Google's Turbo rainbow, the look of most wind maps; its darkest ends are trimmed so calm and storm still show on the dark map.
- * - spectrum: grey, yellow, green, orange, red, purple, one per range. Its green leans yellow (~105°) so it never reads as `go`.
+ * - spectrum: grey <10, light blue 10–12, blue 12–14, green 14–17, yellow 17–20, orange 20–25, red 25–28, purple 28+ (its own
+ *   ranges). Its green leans yellow (~105°) so it never reads as `go`.
  */
 export const WIND_SCALES: Record<WindScale, { label: string; note: string; stops: Stops }> = {
   blue: {
@@ -360,17 +361,23 @@ export const WIND_SCALES: Record<WindScale, { label: string; note: string; stops
     ],
   },
   spectrum: {
-    label: "Spectrum", note: "Grey, yellow, green, orange, red, purple",
+    label: "Spectrum", note: "Grey, blues, green, yellow, orange, red, purple",
     stops: [
       [0, [78, 86, 100]], [4, [106, 114, 128]], [9.5, [150, 156, 166]], // <10: grey
-      [11, [232, 208, 72]], [13, [240, 212, 64]],                       // 10–14: yellow
-      [14.5, [124, 206, 80]], [17, [98, 196, 72]],                      // 14–18: green
-      [18.5, [250, 148, 52]], [24.5, [246, 124, 40]],                   // 18–25: orange
-      [25.5, [236, 68, 60]], [29, [222, 50, 54]],                       // 25–30: red
-      [30.5, [178, 76, 228]], [40, [204, 64, 238]],                     // 30+: purple
+      [10.5, [150, 200, 240]], [11.5, [158, 206, 244]],                 // 10–12: light blue
+      [12.5, [70, 144, 234]], [13.5, [60, 134, 230]],                   // 12–14: blue
+      [14.5, [112, 206, 80]], [16.5, [96, 196, 72]],                    // 14–17: green
+      [17.5, [238, 212, 64]], [19.5, [244, 204, 56]],                   // 17–20: yellow
+      [20.5, [250, 150, 52]], [24.5, [244, 122, 40]],                   // 20–25: orange
+      [25.5, [236, 68, 60]], [27.5, [222, 50, 54]],                     // 25–28: red
+      [28.5, [178, 76, 228]], [40, [204, 64, 238]],                     // 28+: purple
     ],
   },
+
 };
+/** 25 kn and up (as shown, rounded) pulses wherever the wind right now / at the chosen hour is drawn, on every scale. */
+export const PULSE_KN = 25;
+export const pulses = (kn: number | null | undefined) => kn != null && Math.round(kn) >= PULSE_KN;
 export const WIND_SCALE_IDS = Object.keys(WIND_SCALES) as WindScale[];
 export const DEFAULT_WIND_SCALE: WindScale = "blue";
 export const isWindScale = (v: unknown): v is WindScale => typeof v === "string" && v in WIND_SCALES;

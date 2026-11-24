@@ -394,7 +394,7 @@ test("the gear beside the bell opens settings, and picking a wind colour scale r
   await expect(group.getByRole("radio", { name: /^Spectrum/ })).toBeChecked();
   await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).not.toBe(blue); // the timeline's legend follows at once
   const spectrum = await legend.evaluate((el) => getComputedStyle(el).backgroundImage);
-  expect(spectrum).toContain("rgb(98, 196, 72)"); // its green
+  expect(spectrum).toContain("rgb(70, 144, 234)"); // its blue (12–14 kn)
 
   // one popover at a time: the bell swaps it for the briefing; Escape closes
   await panel(page).getByRole("button", { name: "Morning briefing" }).click();

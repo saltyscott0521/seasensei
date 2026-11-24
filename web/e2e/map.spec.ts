@@ -345,3 +345,15 @@ test("markers outside the open map leave the Tab order, and come back when the m
   for (let i = 0; i < 8; i++) await page.keyboard.press("-");
   await expect(clearwater).not.toHaveAttribute("tabindex", "-1", { timeout: 15_000 });
 });
+
+test("strong wind (25 kn and up) pulses on the map; lighter wind stays still", async ({ page }) => {
+  await page.route("https://mesonet.agron.iastate.edu/**", (r) => r.fulfill({ json: { data: [
+    { station: "MCF", name: "MACDILL AFB/TAMPA", lat: 27.8598, lon: -82.5132, sknt: 27, gust: 34, drct: 230, utc_valid: new Date().toISOString() },
+  ] } }));
+  await page.goto("/");
+  const mcf = page.locator(".maplibregl-marker button[data-station*='MCF']");
+  await expect(mcf.locator("[data-wind-pulse]")).toHaveClass(/wind-pulse/);
+  // the spots (mock wind peaks at 24 kn) don't
+  await expect(page.locator(".maplibregl-marker [data-marker-pill]").first()).toBeVisible();
+  await expect(page.locator(".maplibregl-marker [data-marker-pill] [data-wind-pulse]")).toHaveCount(0);
+});

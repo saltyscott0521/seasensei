@@ -7,7 +7,7 @@ import { useModelCompare } from "../../lib/data";
 import { ago, chanceOf, confidence, fmtDay, fmtHour, fmtKm, fmtSpan, fmtStrength, fmtWindow, NEARBY_WARN_KM, sameDay, type Session } from "../../lib/session";
 import { useNow } from "../../lib/time";
 import { useSpotNow, type RankedSpot } from "../../lib/useSpotNow";
-import { windColor, type Spot } from "../../lib/wind";
+import { pulses, windColor, type Spot } from "../../lib/wind";
 import { Skeleton, WindArrow } from "../bits";
 import { capitalise, markerState, TONE_TEXT } from "../map/markerState";
 import { Button, cardClass, ConfidenceDots, Ribbon, RIBBON_WORDS, VerdictPill, type RibbonState } from "../ui";
@@ -195,7 +195,8 @@ function Reading({ id, spot, sn, tz, now }: { id: string; spot: Spot; sn: Return
       </span>
       <span aria-hidden className="text-line-strong">·</span>
       {/* the arrow wears the wind-scale colour (data colour), the number stays ink-legible */}
-      <span className="inline-flex" style={{ color: windColor(speed) }}><WindArrow dir={s.dir} size={12} /></span>
+      <span className={clsx("inline-flex", pulses(speed) && "wind-pulse")} data-wind-pulse={pulses(speed) || undefined}
+        style={{ color: windColor(speed) }}><WindArrow dir={s.dir} size={12} /></span>
       <span className="num whitespace-nowrap">
         <span className="font-semibold text-fg">{speed}</span>
         <span className="text-fg-3"> kn</span>

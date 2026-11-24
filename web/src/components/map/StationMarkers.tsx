@@ -4,7 +4,7 @@ import { memo, useEffect } from "react";
 import { Marker } from "react-map-gl/maplibre";
 import { duration, ease } from "../../lib/motion";
 import { ago } from "../../lib/session";
-import { compass, windColor, type LiveReading } from "../../lib/wind";
+import { compass, pulses, windColor, type LiveReading } from "../../lib/wind";
 import { WindArrow } from "../bits";
 import { useWindScale } from "../../lib/windScale";
 
@@ -70,7 +70,8 @@ const StationMarker = memo(function StationMarker({ r, open, hidden, dim, offscr
           "transition-[scale] duration-(--dur-fast) ease-ui group-hover:scale-110 group-focus-visible:outline-accent motion-reduce:transition-none",
           open ? "ring-accent" : "ring-line-strong",
         )}>
-          <span style={{ color: windColor(r.speed) }} className="grid size-3 place-items-center">
+          <span style={{ color: windColor(r.speed) }} data-wind-pulse={pulses(r.speed) || undefined}
+            className={clsx("grid size-3 place-items-center", pulses(r.speed) && "wind-pulse")}>
             {r.speed > 0.5 ? <WindArrow dir={r.dir} size={11} /> : <span className="block size-1.5 rounded-full bg-current" />}
           </span>
           <span className="num text-micro font-semibold leading-none text-fg-2">{n}</span>

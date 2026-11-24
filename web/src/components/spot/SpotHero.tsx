@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { fmtRange } from "../../lib/sensei";
 import { chanceOf, darkWord, isDaylight, isDaylightHour, type NowVerdict } from "../../lib/session";
 import type { useSpotNow } from "../../lib/useSpotNow";
-import { compass, MODEL_INFO, rideState, windColor, windGradient, type Ride, type Spot } from "../../lib/wind";
+import { compass, MODEL_INFO, pulses, rideState, windColor, windGradient, type Ride, type Spot } from "../../lib/wind";
 import { Dial, Skeleton, WindArrow } from "../bits";
 import { Button, Chip, VerdictPill } from "../ui";
 import { Dotted } from "./Dotted";
@@ -73,7 +73,8 @@ export function SpotHero({ spot, pill, shown, when, source, scrubbing, now, mode
   return (
     <div className="relative overflow-hidden rounded-lg border border-line bg-surface-2 p-4">
       {shown && (
-        <div aria-hidden className="pointer-events-none absolute -right-14 -top-16 size-52 rounded-full blur-3xl"
+        <div aria-hidden className={clsx("pointer-events-none absolute -right-14 -top-16 size-52 rounded-full blur-3xl", pulses(shown.speed) && "wind-pulse")}
+          data-wind-pulse={pulses(shown.speed) || undefined}
           style={{ background: windColor(shown.speed, 0.16) }} />
       )}
 
