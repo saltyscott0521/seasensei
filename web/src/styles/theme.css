@@ -138,8 +138,8 @@ body {
 
 /* Strong wind (25 kn+, `pulses()` in lib/wind.ts): the wind-coloured mark breathes while it lasts. Transform and opacity
    only, on small elements; paused while the map is covered; still for reduced motion. */
-@keyframes wind-pulse { 0%, 100% { opacity: 1; transform: scale(1) } 50% { opacity: .5; transform: scale(1.14) } }
-.wind-pulse { animation: wind-pulse 1.4s ease-in-out infinite; will-change: transform, opacity; }
+@keyframes wind-pulse { 0%, 100% { opacity: 1; transform: scale(1) } 50% { opacity: .35; transform: scale(1.22) } }
+.wind-pulse { animation: wind-pulse 1.2s ease-in-out infinite; will-change: transform, opacity; }
 [data-map-covered] .wind-pulse { animation-play-state: paused; }
 
 /* Toast actions (Undo) are thumb-sized on phones. */

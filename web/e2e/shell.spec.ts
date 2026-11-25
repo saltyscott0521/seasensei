@@ -395,7 +395,7 @@ test("the gear beside the bell opens settings, and picking a wind colour scale r
   await expect(group.getByRole("radio", { name: /^Blue/ })).toBeChecked();
   await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).not.toBe(start); // the timeline's legend follows at once
   const blue = await legend.evaluate((el) => getComputedStyle(el).backgroundImage);
-  expect(blue).toContain("rgb(132, 186, 250)"); // its prime 18–25
+  expect(blue).toContain("rgb(70, 190, 255)"); // its prime 18–25
 
   // one popover at a time: the bell swaps it for the briefing; Escape closes
   await panel(page).getByRole("button", { name: "Morning briefing" }).click();
@@ -410,5 +410,5 @@ test("the gear beside the bell opens settings, and picking a wind colour scale r
   await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).toBe(blue);
   await gear.click();
   await page.getByRole("dialog", { name: "Settings" }).getByText("Turbo", { exact: true }).click();
-  await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).toContain("rgb(126, 255, 85)");
+  await expect.poll(() => legend.evaluate((el) => getComputedStyle(el).backgroundImage)).toContain("rgb(168, 70, 232)"); // its purple from 25 kn
 });

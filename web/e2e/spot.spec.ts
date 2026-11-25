@@ -424,15 +424,23 @@ const hsl = (css: string) => {
   return { h: (h + 360) % 360, s, l };
 };
 
-test("the default scale (Spectrum) runs the riders' ranges, its green apart from the 'go' verdict's, and the hour grid wears it; Blue only brightens", async ({ page }) => {
-  const [spectrum, scale] = await page.evaluate(async () => {
+test("the default scale (Spectrum) runs the riders' ranges, its green apart from the 'go' verdict's, and the hour grid wears it; Blue only brightens; Turbo turns early, then purple", async ({ page }) => {
+  const [spectrum, scale, turbo] = await page.evaluate(async () => {
     const m = await import(/* @vite-ignore */ ("/src/lib/wind.ts" as string));
     const spectrum = [5, 11, 13, 15.5, 18.5, 22, 26.5, 32].map((kn) => m.windColor(kn) as string);
     m.setWindScale("blue");
     const blue = [5, 12, 15, 22, 28, 35].map((kn) => m.windColor(kn) as string);
+    m.setWindScale("turbo");
+    const turbo = [12, 18, 24, 26, 35].map((kn) => m.windColor(kn) as string);
     m.setWindScale(m.DEFAULT_WIND_SCALE);
-    return [spectrum, blue];
+    return [spectrum, blue, turbo];
   });
+  // Turbo turns early: green by 12 kn, amber by 18, red by 24, then purple from 25
+  const [t12, t18, t24, t26, t35] = turbo.map(hsl);
+  expect(t12.h).toBeGreaterThanOrEqual(95); expect(t12.h).toBeLessThanOrEqual(130);
+  expect(t18.h).toBeGreaterThanOrEqual(35); expect(t18.h).toBeLessThanOrEqual(55);
+  expect(t24.h).toBeLessThanOrEqual(20);
+  for (const p of [t26, t35]) { expect(p.h).toBeGreaterThanOrEqual(265); expect(p.h).toBeLessThanOrEqual(290); }
   // grey, light blue, blue, green, yellow, orange, red, purple
   const [grey, light, blu, green, yellow, orange, red, purple] = spectrum.map(hsl);
   expect(grey.s).toBeLessThan(0.15);

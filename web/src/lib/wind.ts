@@ -335,9 +335,9 @@ export type WindScale = "blue" | "turbo" | "spectrum";
  * Wind speed → colour. The rider picks the scale (settings; `lib/windScale.ts` keeps the choice, default spectrum); every
  * consumer reads it through windColor / windGradient / windStops. All three are anchored to the ranges riders think in
  * (blue and turbo: <10, 10–14, 14–18, 18–25 prime, 25–30, 30+; spectrum its own, below): each step flat across the core of its range, blending near the edges.
- * - blue: one blue (hue ~212°) that only brightens with the wind (the map and panels are dark, so light reads as strong);
+ * - blue: one vivid blue (hue ~200–220°, deep navy → saturated → electric → ice → near-white) that only brightens with the wind;
  *   reads without hue, for colour-blind riders too, and stays well apart from the `go` verdict's emerald (#34d399, ~158°).
- * - turbo: Google's Turbo rainbow, the look of most wind maps; its darkest ends are trimmed so calm and storm still show on the dark map.
+ * - turbo: Google's Turbo rainbow squeezed into 0–25 kn (colour changes early, red by 24), then purple from 25 kn.
  * - spectrum: grey <10, light blue 10–12, blue 12–14, green 14–17, yellow 17–20, orange 20–25, red 25–28, purple 28+ (its own
  *   ranges). Its green leans yellow (~105°) so it never reads as `go`.
  */
@@ -357,21 +357,24 @@ export const WIND_SCALES: Record<WindScale, { label: string; note: string; stops
   },
 
   blue: {
-    label: "Blue", note: "One colour, brighter with more wind",
+    label: "Blue", note: "One vivid blue, brighter with more wind",
     stops: [
-      [0, [44, 58, 80]], [4, [52, 70, 98]], [9.5, [66, 92, 132]],     // <10: dim slate blue
-      [11, [70, 112, 170]], [13, [78, 126, 192]],                    // 10–14
-      [14.5, [92, 148, 226]], [17, [104, 160, 236]],                 // 14–18
-      [18.5, [132, 186, 250]], [24.5, [150, 198, 252]],              // 18–25: prime, bright
-      [25.5, [190, 220, 254]], [29, [204, 228, 255]],                // 25–30: pale
-      [30.5, [236, 245, 255]], [40, [250, 252, 255]],                // 30+: near white
+      [0, [30, 48, 84]], [4, [36, 60, 110]], [9.5, [44, 82, 160]],     // <10: deep navy
+      [11, [30, 110, 220]], [13, [34, 124, 236]],                    // 10–14: saturated blue
+      [14.5, [40, 150, 255]], [17, [56, 166, 255]],                  // 14–18: azure
+      [18.5, [70, 190, 255]], [24.5, [104, 200, 255]],               // 18–25: prime, electric
+      [25.5, [184, 228, 255]], [29, [204, 236, 255]],                // 25–30: ice
+      [30.5, [238, 246, 255]], [40, [248, 251, 255]],                // 30+: near white
     ],
   },
   turbo: {
-    label: "Turbo", note: "Rainbow, like most wind maps",
+    label: "Turbo", note: "Rainbow through 25 kn, then purple",
     stops: [
-      [0, [64, 71, 169]], [4, [68, 122, 233]], [8, [50, 171, 239]], [12, [34, 212, 203]], [16, [55, 242, 150]], [20, [126, 255, 85]],
-      [24, [184, 243, 57]], [28, [233, 203, 55]], [32, [248, 143, 39]], [36, [229, 82, 16]], [40, [185, 34, 3]],
+      // Google's Turbo squeezed into 0–25 kn so the colour moves at the speeds riders care about …
+      [0, [64, 71, 169]], [3, [68, 132, 242]], [6, [38, 189, 228]], [9, [39, 231, 174]], [12, [109, 252, 100]],
+      [15, [181, 244, 59]], [18, [240, 196, 55]], [21, [246, 121, 30]], [24.5, [202, 43, 4]],
+      // … then one purple for everything strong (it pulses, like every 25 kn+ mark)
+      [25.5, [168, 70, 232]], [32, [186, 92, 246]], [40, [206, 128, 255]],
     ],
   },
 };
